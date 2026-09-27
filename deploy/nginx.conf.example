@@ -1,0 +1,24 @@
+# Для терминала и живого лога нужны WebSocket — без Upgrade-заголовков они не пройдут.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name deck.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/deck.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/deck.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;          # сессия терминала может висеть долго
+    }
+}

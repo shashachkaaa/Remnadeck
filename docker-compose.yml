@@ -1,0 +1,19 @@
+services:
+  remnadeck:
+    build: .
+    image: remnadeck:latest
+    container_name: remnadeck
+    restart: unless-stopped
+    environment:
+      ENV_FILE: /config/.env
+    volumes:
+      - ./.env:/config/.env        # все настройки панели; панель сама пишет сюда изменения из веба
+      - ./data:/data
+    ports:
+      - "127.0.0.1:${PANEL_PORT:-8090}:8090"   # наружу панель отдаёт реверс-прокси по домену
+    networks:
+      - remnawave-network
+
+networks:
+  remnawave-network:
+    external: true

@@ -1,0 +1,18 @@
+# Caddy в той же docker-сети, что и remnadeck (стандартная установка Remnawave):
+deck.example.com {
+    encode gzip
+    reverse_proxy remnadeck:8090
+}
+
+# Caddy на хосте (network_mode: host или systemd):
+# deck.example.com {
+#     encode gzip
+#     reverse_proxy 127.0.0.1:8090
+# }
+
+# Статус-страница для клиентов (STATUS_DOMAIN): тот же upstream, панель сама
+# отдаёт на этом домене только статус-страницу
+# status.example.com {
+#     encode gzip
+#     reverse_proxy remnadeck:8090
+# }
