@@ -1,22 +1,61 @@
 #!/usr/bin/env bash
-# Установка / обновление RemnaDeck. Запуск: sudo bash install.sh
+# Установка и обновление RemnaDeck.
+#
+#   bash <(curl -fsSL https://raw.githubusercontent.com/shashachkaaa/Remnadeck/main/install.sh)
+#
+# Запущенный так, скрипт сам скачает проект в /opt/remnadeck (другая папка — REMNADECK_DIR=…).
+# Повторный запуск той же командой — обновление: код заменяется, .env и data/ не трогаются.
+# Из папки проекта работает как раньше: sudo bash install.sh
 set -euo pipefail
-cd "$(dirname "$0")"
-DIR=$(pwd)
+
+REPO="${REMNADECK_REPO:-shashachkaaa/Remnadeck}"
+BRANCH="${REMNADECK_BRANCH:-main}"
 
 ok() { printf '\033[32m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
-ask() { local p="$1" d="${2:-}" v; read -rp "$p${d:+ [$d]}: " v; echo "${v:-$d}"; }
+die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
+# читаем с терминала, а не со stdin — иначе не работает запуск через curl | bash
+ask() { local p="$1" d="${2:-}" v=""; read -rp "$p${d:+ [$d]}: " v </dev/tty || true; echo "${v:-$d}"; }
+
+[[ $EUID -eq 0 ]] || die "Запусти от root (sudo)"
+
+# ---------------- скачать / обновить код, если запущены не из папки проекта
+SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)
+if [[ ! -f "$SELF/docker-compose.yml" || ! -d "$SELF/app" ]]; then
+  DIR="${REMNADECK_DIR:-/opt/remnadeck}"
+  mkdir -p "$DIR"
+  if [[ -d "$DIR/.git" ]] && command -v git >/dev/null; then
+    ok "Обновляю $DIR из git"
+    git -C "$DIR" pull --ff-only || die "git pull не прошёл — в $DIR есть свои правки. Разберись с ними или удали .git"
+  else
+    [[ -f "$DIR/docker-compose.yml" ]] && ok "Обновляю код в $DIR (.env и data/ остаются)" || ok "Скачиваю RemnaDeck в $DIR"
+    command -v curl >/dev/null || die "Нужен curl"
+    # в архиве нет .env и data/ — они в .gitignore, так что настройки не перезапишутся
+    curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+      | tar -xz --strip-components=1 -C "$DIR" || die "Не удалось скачать https://github.com/$REPO"
+  fi
+  exec bash "$DIR/install.sh" "$@"
+fi
+
+cd "$SELF"
+DIR=$(pwd)
 envget() { grep -E "^$1=" .env | tail -1 | cut -d= -f2- | sed -E "s/^[\"'](.*)[\"']$/\1/"; }
 
-command -v docker >/dev/null || { echo "Нужен Docker"; exit 1; }
+# ---------------- Docker
+if ! command -v docker >/dev/null; then
+  [[ "$(ask "Docker не найден. Поставить (официальный скрипт get.docker.com)? y/n" "y")" == "y" ]] || die "Нужен Docker"
+  curl -fsSL https://get.docker.com | sh
+fi
+docker compose version >/dev/null 2>&1 || die "Нужен docker compose v2 (плагин docker-compose-plugin)"
 
 # docker сам создаёт ПАПКУ .env, если файла не было при первом запуске — чиним
 [[ -d .env ]] && rmdir .env 2>/dev/null || true
 
+FIRST=0
 if [[ ! -s .env ]]; then
+  FIRST=1
   DOMAIN=$(ask "Домен панели (например deck.example.com)")
-  [[ -n "$DOMAIN" ]] || { echo "Домен обязателен"; exit 1; }
+  [[ -n "$DOMAIN" ]] || die "Домен обязателен"
   PORT=$(ask "Локальный порт" "8090")
   cat > .env <<ENV
 # RemnaDeck — остальное панель допишет сама после первого входа
@@ -37,18 +76,35 @@ grep -q "^CRYPT_KEY=" .env || {
   ok "Добавлен CRYPT_KEY — им шифруются SSH-доступы к серверам нод"
 }
 chmod 600 .env
-DOMAIN=$(envget PANEL_DOMAIN); PORT=$(envget PANEL_PORT); PORT=${PORT:-8090}
+DOMAIN=$(envget PANEL_DOMAIN); PORT=$(envget PANEL_PORT || true); PORT=${PORT:-8090}
 
 docker network inspect remnawave-network >/dev/null 2>&1 || {
   warn "Сети remnawave-network нет — создаю. Если Remnawave на другом сервере, в мастере укажи https://адрес_панели"
   docker network create remnawave-network >/dev/null
 }
 
+# ---------------- сборка. Docker Hub бывает недоступен — тогда базовый образ берём с зеркала
+build() {
+  docker compose build && return 0
+  local base
+  base=$(awk '/^FROM/ {print $2; exit}' Dockerfile)
+  warn "Сборка не прошла — похоже, недоступен Docker Hub. Беру $base с зеркала"
+  for m in mirror.gcr.io/library dockerhub.timeweb.cloud/library; do
+    if docker pull -q "$m/$base" >/dev/null 2>&1; then
+      docker tag "$m/$base" "$base"
+      ok "Базовый образ взят с $m"
+      # классический сборщик берёт локальный образ и не лезет в Docker Hub за метаданными
+      DOCKER_BUILDKIT=0 docker build -t remnadeck:latest . && return 0
+    fi
+  done
+  die "Не удалось собрать образ: Docker Hub и зеркала недоступны"
+}
 mkdir -p data
-docker compose up -d --build
+build
+docker compose up -d
 ok "Контейнер remnadeck запущен (127.0.0.1:$PORT)"
 
-# --- реверс-прокси (Caddy от Remnawave)
+# ---------------- реверс-прокси (Caddy от Remnawave) — только при первой установке
 CADDY_CT=$(docker ps --format '{{.Names}}' | grep -i caddy | head -1 || true)
 CADDYFILE=""
 for f in /opt/remnawave/caddy/Caddyfile /opt/remnawave/Caddyfile /etc/caddy/Caddyfile; do
@@ -67,7 +123,7 @@ if [[ -n "$CADDYFILE" ]] && ! grep -qF "$DOMAIN" "$CADDYFILE"; then
       systemctl reload caddy && ok "Caddy перечитал конфиг"
     fi
   fi
-elif [[ -z "$CADDYFILE" ]]; then
+elif [[ -z "$CADDYFILE" && $FIRST -eq 1 ]]; then
   warn "Caddyfile не найден — примеры для Caddy и nginx в папке deploy/"
 fi
 
@@ -76,4 +132,5 @@ CODE=$(envget SETUP_TOKEN || true)
 echo
 ok "Панель: https://$DOMAIN   (A-запись домена → IP этого сервера)"
 [[ -n "$CODE" ]] && ok "Код первого входа: $CODE"
+ok "Обновить потом: bash <(curl -fsSL https://raw.githubusercontent.com/$REPO/$BRANCH/install.sh)"
 exit 0

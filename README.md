@@ -25,17 +25,31 @@
 
 ## Установка
 
+Одной командой на сервере с Remnawave (от root):
+
 ```bash
-cd /opt/remnadeck
-sudo bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/shashachkaaa/Remnadeck/main/install.sh)
 ```
 
-Установщик спрашивает только домен, создаёт `.env`, поднимает контейнер, дописывает домен
-в Caddyfile Remnawave (если найдёт) и печатает **код первого входа**.
+Скрипт скачает проект в `/opt/remnadeck` (другая папка — `REMNADECK_DIR=/путь` перед командой),
+при необходимости поставит Docker, спросит домен, создаст `.env`, соберёт и поднимет контейнер,
+допишет домен в Caddyfile Remnawave (если найдёт) и напечатает **код первого входа**.
 Открой домен — мастер попросит код, логин и пароль администратора, адрес и токен Remnawave,
 по желанию Telegram. Всё сохраняется в `.env`, пароль — только хешем (scrypt).
 
+Если Docker Hub с сервера недоступен, базовый образ берётся с зеркала (`mirror.gcr.io`, Timeweb).
+
 Забыл код: `grep SETUP_TOKEN /opt/remnadeck/.env` или `docker logs remnadeck`.
+
+## Обновление
+
+Та же команда. Код заменяется свежим с GitHub, `.env` и `data/` не трогаются:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/shashachkaaa/Remnadeck/main/install.sh)
+```
+
+Из папки проекта — `cd /opt/remnadeck && sudo bash install.sh` (пересобрать без скачивания).
 
 ## Обновление с 0.2
 
