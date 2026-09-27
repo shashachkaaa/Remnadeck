@@ -2316,9 +2316,12 @@ const AUTO_ACTIONS = {
   squad_remove: "Убрать сквад",
   sub_message: "Сообщение в подписке",
   sub_hide: "Скрыть хосты в подписке",
+  extend_days: "Продлить подписку",
 };
+const EVENT_ACTIONS = ["extend_days", "squad_add", "squad_remove"];
 
 function autoTrigger(t, m) {
+  if (t.type === "sub_request") return `обновил подписку, в User-Agent есть «${esc(t.ua)}» <span class="muted">(один раз)</span>`;
   if (t.type === "quota") {
     const r = m.rules.find((x) => x.id === t.rule_id);
     return `квота «${esc(r ? r.name : "удалена")}» ≥ ${t.percent}%`;
@@ -2334,6 +2337,7 @@ function autoAction(a, m) {
   if (a.type === "squad_remove") return `− сквад ${sq(a.squad)}${a.drop_nodes?.length ? " · разрыв соединений" : ""}`;
   if (a.type === "sub_message") return `сообщение «${esc(a.text.length > 40 ? a.text.slice(0, 40) + "…" : a.text)}»`;
   if (a.type === "sub_hide") return `скрыть ${a.hosts.length} хост(а)`;
+  if (a.type === "extend_days") return `+${a.days} дн. к подписке`;
   return esc(a.type);
 }
 
@@ -2351,6 +2355,8 @@ function autoActionRow(a, m) {
   else if (a.type === "sub_message") body = `<label>Текст<textarea data-f="text" rows="2" maxlength="300">${esc(a.text || "")}</textarea>
       <span class="hint">Встаёт на место <code>{{RD_MESSAGE}}</code> в объявлении Remnawave, а если его там нет — в начало плашки Happ.
       Можно <code>{{RD_QUOTA_LEFT}}</code>, <code>{{RD_QUOTA_RESET}}</code> и остальные. Только через прослойку</span></label>`;
+  else if (a.type === "extend_days") body = `<label>Дней<input data-f="days" type="number" min="1" max="3650" value="${a.days || 7}" style="max-width:160px">
+      <span class="hint">К текущей дате окончания; если подписка уже истекла — от сегодня, и она снова станет активной</span></label>`;
   else if (a.type === "sub_hide") body = `<div class="checks">${m.hosts.map((h) => `<label class="check"><input type="checkbox" data-f="host" value="${esc(h)}"
       ${(a.hosts || []).includes(h) ? "checked" : ""}><span>${esc(h)}</span></label>`).join("")}</div>
       <span class="hint">Хост пропадёт из подписки, но доступ не закроется — для этого сквады. Работает для ссылок и Xray JSON</span>`;
@@ -2367,6 +2373,7 @@ function readActionRow(el) {
   if (t === "squad_remove") return { type: t, squad: f("squad").value, drop_nodes: drop };
   if (t === "sub_message") return { type: t, text: f("text").value };
   if (t === "sub_hide") return { type: t, hosts: $$('[data-f="host"]:checked', el).map((x) => x.value) };
+  if (t === "extend_days") return { type: t, days: Number(f("days").value) };
   return { type: t };
 }
 
@@ -2380,7 +2387,11 @@ function autoForm(existing, m) {
     body: `<label>Название<input name="name" value="${esc(a.name)}" required maxlength="60" placeholder="Например: Обход исчерпан → База"></label>
       <label>Условие<select name="ttype" id="a-ttype">
         <option value="quota" ${t.type === "quota" ? "selected" : ""}>Порог квоты</option>
-        <option value="expiry" ${t.type === "expiry" ? "selected" : ""}>Срок подписки</option></select></label>
+        <option value="expiry" ${t.type === "expiry" ? "selected" : ""}>Срок подписки</option>
+        <option value="sub_request" ${t.type === "sub_request" ? "selected" : ""}>Обновил подписку (User-Agent) — разово</option></select></label>
+      <div id="a-ua"><label>User-Agent содержит<input name="ua" value="${esc(t.ua || "")}" placeholder="ward">
+        <span class="hint">Несколько слов — через запятую, регистр не важен. Срабатывает при обновлении подписки через прослойку,
+          <b>один раз на пользователя</b> и без отката. User-Agent задаёт клиент — это промо-механика, а не защита</span></label></div>
       <div class="form-grid" id="a-quota">
         <label>Правило квоты<select name="rule_id">${m.rules.map((r) => `<option value="${r.id}" ${r.id === t.rule_id ? "selected" : ""}>${esc(r.name)} · ${Math.round(r.limit_bytes / 1024 ** 3)} ГБ</option>`).join("")}</select>
           <span class="hint">Счёт ведёт движок квот. Чтобы не было двойного перевода, поставь правило в «только счётчик»</span></label>
@@ -2406,6 +2417,7 @@ function autoForm(existing, m) {
       const actions = $$(".auto-act", form).map(readActionRow);
       if (!actions.length) throw new Error("Добавь хотя бы одно действие");
       const trigger = v.ttype === "quota" ? { type: "quota", rule_id: Number(v.rule_id), percent: Number(v.percent), squad: v.squad }
+        : v.ttype === "sub_request" ? { type: "sub_request", ua: v.ua, squad: v.squad }
         : { type: "expiry", when: v.when, days: Number(v.days), squad: v.squad };
       const payload = { name: v.name.trim(), enabled: !!v.enabled, mode: v.mode, trigger, actions };
       const r = existing ? await api(`/api/automations/${existing.id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -2418,8 +2430,10 @@ function autoForm(existing, m) {
     },
   });
   const sync = () => {
-    const q = $("#a-ttype", el).value === "quota";
-    $("#a-quota", el).hidden = !q; $("#a-expiry", el).hidden = q;
+    const tt = $("#a-ttype", el).value, ev = tt === "sub_request";
+    $("#a-quota", el).hidden = tt !== "quota"; $("#a-expiry", el).hidden = tt !== "expiry"; $("#a-ua", el).hidden = !ev;
+    // разовому событию — только разовые действия; продление — только событию
+    $$("#a-add option[value]", el).forEach((o) => { if (o.value) o.hidden = ev ? !EVENT_ACTIONS.includes(o.value) : o.value === "extend_days"; });
   };
   $("#a-ttype", el).addEventListener("change", sync); sync();
   $("#a-add", el).addEventListener("change", (e) => {
@@ -2433,10 +2447,12 @@ function autoForm(existing, m) {
 
 async function autoLog(a) {
   const d = await api(`/api/automations/${a.id}/log`);
-  const EV = { apply: ["ok", "применено"], revert: ["info", "откат"], forget: ["warn", "откат пропущен"], error: ["bad", "ошибка"] };
+  const EV = { apply: ["ok", "применено"], revert: ["info", "откат"], forget: ["warn", "откат пропущен"], error: ["bad", "ошибка"],
+    would: ["warn", "тест: сработала бы"] };
+  const ev = a.trigger.type === "sub_request";
   openSheet({
     title: esc(a.name), subtitle: "", lead: icon("bolt"),
-    body: `<h3 style="margin:0 0 8px">Сейчас действует (${d.held.length})</h3>
+    body: `<h3 style="margin:0 0 8px">${ev ? "Уже получили" : "Сейчас действует"} (${d.held.length})</h3>
       ${d.held.length ? `<p class="muted">${d.held.slice(0, 300).map((h) => esc(h.username)).join(", ")}</p>` : `<p class="muted">Ни на кого.</p>`}
       <h3 style="margin:16px 0 8px">Журнал</h3>
       ${d.log.length ? `<div class="table-wrap"><table><tbody>${d.log.map((l) => `<tr><td class="muted" style="white-space:nowrap">${new Date(l.ts * 1000).toLocaleString("ru-RU")}</td>
@@ -2461,13 +2477,15 @@ Object.assign(VIEWS, {
         <p style="margin:6px 0"><span class="muted">если</span> ${autoTrigger(a.trigger, meta)}${a.trigger.squad ? ` <span class="muted">· со сквадом ${esc((meta.squads.find((s) => s.uuid === a.trigger.squad) || {}).name || "?")}</span>` : ""}</p>
         <p style="margin:6px 0"><span class="muted">то</span> ${a.actions.map((x) => autoAction(x, meta)).join(" · ")}</p>
         <footer class="live">
-          <span title="Сейчас действует">${icon("users")}<b>${a.held}</b></span>
+          ${a.event ? `<span title="Уже получили">${icon("users")}<b>${a.fired}</b> получили</span>
+            ${a.mode !== "active" ? `<span class="muted">в тесте сработала бы у ${a.would}</span>` : ""}`
+          : `<span title="Сейчас действует">${icon("users")}<b>${a.held}</b></span>
           <span title="Под условием">${icon("gauge")}<b>${r.matched ?? "—"}</b></span>
           ${r.errors?.length ? `<span class="tag bad">ошибок ${r.errors.length}</span>` : ""}
-          <span style="margin-left:auto" class="muted">${a.last_run ? `прогон ${ago(a.last_run)}` : "ещё не запускалась"}</span>
+          <span style="margin-left:auto" class="muted">${a.last_run ? `прогон ${ago(a.last_run)}` : "ещё не запускалась"}</span>`}
         </footer>
         <div class="form-actions" style="margin-top:10px">
-          <button class="btn btn-sm" data-a="preview" data-id="${a.id}">Кого затронет</button>
+          ${a.event ? "" : `<button class="btn btn-sm" data-a="preview" data-id="${a.id}">Кого затронет</button>`}
           <button class="btn btn-sm" data-a="log" data-id="${a.id}">Журнал</button>
           <button class="btn btn-sm" data-a="edit" data-id="${a.id}">Изменить</button>
           <button class="btn btn-sm btn-ghost btn-danger" data-a="del" data-id="${a.id}">Удалить</button>
@@ -2475,7 +2493,8 @@ Object.assign(VIEWS, {
     }).join("")}</div>` : `<div class="panel" data-a><p class="empty">Автоматизаций нет. Примеры:<br>
       • квота «Обход» ≥ 100% → переместить из «Обход» в «База» + сообщение «Лимит обхода исчерпан, вернётся {{RD_QUOTA_RESET}}»<br>
       • квота ≥ 80% → сообщение «Осталось {{RD_QUOTA_LEFT}} ГБ обхода»<br>
-      • подписка истекает через ≤ 3 дня → сообщение «Продлите подписку в боте»</p></div>`,
+      • подписка истекает через ≤ 3 дня → сообщение «Продлите подписку в боте»<br>
+      • обновил подписку, в User-Agent есть «ward» → +7 дней к подписке (один раз)</p></div>`,
     bind: ({ list, meta }, root) => {
       $("#a-new").addEventListener("click", () => autoForm(null, meta));
       $$("[data-a]", root).forEach((b) => b.addEventListener("click", (e) => {

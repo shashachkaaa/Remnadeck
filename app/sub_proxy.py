@@ -440,6 +440,7 @@ async def handle(scope, receive, send):
     m = SHORT_UUID.match(scope["path"])
     if m and r.status_code == 200 and req.method == "GET":
         stats["subs"] += 1
+        _fire(m.group(1), req.headers.get("user-agent", ""))
         try:
             new = await rewrite(m.group(1), r, body, out_headers)
             if new is not None:
@@ -456,6 +457,23 @@ async def handle(scope, receive, send):
     resp.raw_headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in out_headers] + \
         [(b"content-length", str(len(body)).encode())]
     await resp(scope, receive, send)
+
+
+_bg: set = set()
+
+
+def _fire(short: str, ua: str):
+    """Событийные автоматизации — в фоне, выдачу подписки не задерживаем."""
+    async def run():
+        try:
+            u = await user_by_short(short)
+            if u and u.get("id"):
+                await automations.on_sub_request(u, ua)
+        except Exception:  # noqa: BLE001
+            log.exception("event automations for %s", short)
+    t = asyncio.create_task(run())
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
 
 
 async def user_ctx(u: dict | None) -> Ctx:

@@ -36,14 +36,24 @@ def validate(body: AutoIn) -> tuple[dict, list[dict]]:
             raise HTTPException(400, "Срок: «истекает через» или «истекла», дней от 0 до 365")
         if trig["when"] == "before" and not trig["days"]:
             raise HTTPException(400, "«Истекает через» — укажи число дней")
+    elif t.get("type") == "sub_request":
+        words = ", ".join(w.strip() for w in (t.get("ua") or "").split(",") if w.strip())
+        if not words or len(words) > 200:
+            raise HTTPException(400, "Укажи слово из User-Agent (можно несколько через запятую)")
+        trig = {"type": "sub_request", "ua": words}
     else:
         raise HTTPException(400, "Неизвестное условие")
     trig["squad"] = (t.get("squad") or "").strip()
+    event = trig["type"] in auto.EVENT_TRIGGERS
 
     actions = []
     for a in body.actions:
         kind = a.get("type")
         drop = [x for x in (a.get("drop_nodes") or []) if isinstance(x, str)]
+        if event and kind not in auto.EVENT_ACTIONS:
+            raise HTTPException(400, "Для обновления подписки подходят: продлить подписку, добавить или убрать сквад")
+        if not event and kind == "extend_days":
+            raise HTTPException(400, "Продление — только для условия «обновил подписку»: иначе оно повторялось бы")
         if kind == "squad_move":
             if not a.get("from") or not a.get("to") or a["from"] == a["to"]:
                 raise HTTPException(400, "Переместить: укажи два разных сквада")
@@ -52,6 +62,11 @@ def validate(body: AutoIn) -> tuple[dict, list[dict]]:
             if not a.get("squad"):
                 raise HTTPException(400, "Укажи сквад")
             actions.append({"type": kind, "squad": a["squad"], **({"drop_nodes": drop} if kind == "squad_remove" else {})})
+        elif kind == "extend_days":
+            days = int(a.get("days") or 0)
+            if not 1 <= days <= 3650:
+                raise HTTPException(400, "Продлить: от 1 до 3650 дней")
+            actions.append({"type": kind, "days": days})
         elif kind == "sub_message":
             text = (a.get("text") or "").strip()
             if not text or len(text) > 300:
@@ -81,7 +96,12 @@ async def autos_list(_: str = Depends(require_auth)):
     db = await auto.db_ready()
     async with db.execute("SELECT auto_id, COUNT(*) c FROM automation_state GROUP BY auto_id") as cur:
         held = {r["auto_id"]: r["c"] for r in await cur.fetchall()}
-    return [{**a, "held": held.get(a["id"], 0)} for a in await auto.all_automations()]
+    async with db.execute("SELECT auto_id, COUNT(*) c FROM automation_once GROUP BY auto_id") as cur:
+        fired = {r["auto_id"]: r["c"] for r in await cur.fetchall()}
+    async with db.execute("SELECT auto_id, COUNT(*) c FROM automation_log WHERE event='would' GROUP BY auto_id") as cur:
+        would = {r["auto_id"]: r["c"] for r in await cur.fetchall()}
+    return [{**a, "held": held.get(a["id"], 0), "event": auto.is_event(a), "fired": fired.get(a["id"], 0),
+             "would": would.get(a["id"], 0)} for a in await auto.all_automations()]
 
 
 @router.get("/meta")
@@ -104,6 +124,7 @@ async def autos_create(body: AutoIn, user: str = Depends(require_auth)):
                            (body.name.strip(), int(body.enabled), body.mode, json.dumps(trig, ensure_ascii=False),
                             json.dumps(actions, ensure_ascii=False), int(time.time())))
     await db.commit()
+    auto.drop_event_cache()
     await add_event("action", "info", f"{user}: создана автоматизация «{body.name.strip()}»")
     res = await auto.run(only=cur.lastrowid)
     return {"ok": True, "id": cur.lastrowid, "result": res.get(cur.lastrowid)}
@@ -114,7 +135,7 @@ async def autos_update(aid: int, body: AutoIn, user: str = Depends(require_auth)
     old = await get_auto(aid)
     trig, actions = validate(body)
     squads = lambda xs: [x for x in xs if x["type"] in auto.SQUAD_ACTIONS]  # noqa: E731
-    if squads(old["actions"]) != squads(actions):
+    if not auto.is_event(old) and squads(old["actions"]) != squads(actions):
         # held-пользователи получили старые действия — откатываем их, новые применятся заново
         await auto.revert_all(aid)
     db = await auto.db_ready()
@@ -122,6 +143,7 @@ async def autos_update(aid: int, body: AutoIn, user: str = Depends(require_auth)
                      (body.name.strip(), int(body.enabled), body.mode, json.dumps(trig, ensure_ascii=False),
                       json.dumps(actions, ensure_ascii=False), aid))
     await db.commit()
+    auto.drop_event_cache()
     await add_event("action", "info", f"{user}: изменена автоматизация «{body.name.strip()}»")
     res = await auto.run(only=aid)  # выключили / тест — тут же откатит; боевой — тут же применит
     return {"ok": True, "result": res.get(aid)}
@@ -136,7 +158,9 @@ async def autos_delete(aid: int, user: str = Depends(require_auth)):
     db = await auto.db_ready()
     await db.execute("DELETE FROM automations WHERE id=?", (aid,))
     await db.execute("DELETE FROM automation_state WHERE auto_id=?", (aid,))
+    await db.execute("DELETE FROM automation_once WHERE auto_id=?", (aid,))
     await db.commit()
+    auto.drop_event_cache()
     await add_event("action", "info", f"{user}: удалена автоматизация «{a['name']}» "
                                       f"(откат у {len(res.get('reverted', []))})")
     return {"ok": True, "reverted": res.get("reverted", []), "forgotten": res.get("forgotten", [])}
@@ -158,9 +182,14 @@ async def autos_preview(aid: int, _: str = Depends(require_auth)):
 @router.get("/{aid}/log")
 async def autos_log(aid: int, _: str = Depends(require_auth)):
     db = await auto.db_ready()
-    async with db.execute("SELECT user_id, username, since, applied FROM automation_state WHERE auto_id=? "
-                          "ORDER BY since DESC", (aid,)) as cur:
-        held = [{**dict(r), "applied": json.loads(r["applied"] or "{}")} for r in await cur.fetchall()]
+    if auto.is_event(await get_auto(aid)):  # «сейчас действует» у событий — кто уже получил
+        async with db.execute("SELECT user_id, username, ts AS since FROM automation_once WHERE auto_id=? "
+                              "ORDER BY ts DESC", (aid,)) as cur:
+            held = [dict(r) for r in await cur.fetchall()]
+    else:
+        async with db.execute("SELECT user_id, username, since, applied FROM automation_state WHERE auto_id=? "
+                              "ORDER BY since DESC", (aid,)) as cur:
+            held = [{**dict(r), "applied": json.loads(r["applied"] or "{}")} for r in await cur.fetchall()]
     async with db.execute("SELECT ts, username, event, detail FROM automation_log WHERE auto_id=? "
                           "ORDER BY id DESC LIMIT 200", (aid,)) as cur:
         log = [dict(r) for r in await cur.fetchall()]

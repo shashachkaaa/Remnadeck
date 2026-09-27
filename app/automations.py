@@ -7,6 +7,11 @@
   squad_move / squad_add / squad_remove — сквады пользователя в Remnawave (+ разрыв соединений)
   sub_message / sub_hide                 — только подписка через прослойку, в Remnawave не пишется
 
+События (trigger sub_request) — другой род: «обновил подписку, в User-Agent есть слово» →
+действия выполняются ОДИН раз на пользователя и не откатываются (extend_days, squad_add,
+squad_remove). Отметка «уже получил» ставится до выполнения — два одновременных запроса
+подписки не дадут бонус дважды; упало действие — отметка снимается, повторится в следующий раз.
+
 Откат. Что именно поменяли в сквадах, записывается в automation_state. Когда условие
 перестало выполняться (новый период квоты, продлил подписку), автоматизация выключена или
 удалена — изменения отменяются. Если админ за это время сам поменял сквады, откат ничего не
@@ -39,9 +44,17 @@ CREATE TABLE IF NOT EXISTS automation_state(auto_id INTEGER, user_id INTEGER, us
 CREATE TABLE IF NOT EXISTS automation_log(id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER,
     auto_id INTEGER, user_id INTEGER, username TEXT, event TEXT, detail TEXT);
 CREATE INDEX IF NOT EXISTS idx_alog ON automation_log(auto_id, id);
+CREATE TABLE IF NOT EXISTS automation_once(auto_id INTEGER, user_id INTEGER, username TEXT, ts INTEGER,
+    PRIMARY KEY(auto_id, user_id));
 """
 SQUAD_ACTIONS = ("squad_move", "squad_add", "squad_remove")
 SUB_ACTIONS = ("sub_message", "sub_hide")
+EVENT_TRIGGERS = ("sub_request",)
+EVENT_ACTIONS = ("extend_days", "squad_add", "squad_remove")
+
+
+def is_event(a: dict) -> bool:
+    return a["trigger"].get("type") in EVENT_TRIGGERS
 
 
 async def db_ready():
@@ -157,7 +170,10 @@ async def run(only: int | None = None, dry: bool = False) -> dict:
     """Один прогон всех (или одной) автоматизаций. dry — только посчитать, кого затронет."""
     async with _lock:
         db = await db_ready()
-        autos = [a for a in await all_automations() if only is None or a["id"] == only]
+        autos = [a for a in await all_automations() if (only is None or a["id"] == only) and not is_event(a)]
+        async with db.execute("SELECT COUNT(*) FROM automation_state") as cur:
+            if not autos and not (await cur.fetchone())[0]:
+                return {}  # нечего проверять и нечего откатывать — Remnawave не дёргаем
         users = await rw.users_all()
         by_id = {u.get("id"): u for u in users if u.get("id")}
         squads_now = {uid: squad_ids(u) for uid, u in by_id.items()}
@@ -263,6 +279,91 @@ async def revert_all(auto_id: int) -> dict:
     await db.commit()
     res = await run(only=auto_id)
     return res.get(auto_id, {})
+
+
+# ---------------- события: обновление подписки
+_events: dict = {"ts": 0.0, "v": []}
+
+
+async def event_automations() -> list[dict]:
+    if time.monotonic() - _events["ts"] > 10:
+        _events["v"] = [a for a in await all_automations() if a["enabled"] and is_event(a)]
+        _events["ts"] = time.monotonic()
+    return _events["v"]
+
+
+def drop_event_cache():
+    _events["ts"] = 0
+
+
+def ua_matches(trigger: dict, ua: str) -> bool:
+    words = [w.strip().casefold() for w in (trigger.get("ua") or "").split(",") if w.strip()]
+    return any(w in (ua or "").casefold() for w in words)
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+async def apply_once(a: dict, u: dict) -> str:
+    """Разовые действия. Данные пользователя — свежие из Remnawave, а не из кеша прослойки."""
+    fresh = await rw.user_find("username", u["username"])
+    squads = squad_ids(fresh)
+    body, done = {"id": fresh.get("id") or u["id"]}, []
+    for x in a["actions"]:
+        t = x.get("type")
+        if t == "extend_days":
+            now = time.time()
+            base = max(_ts(fresh.get("expireAt")) or now, now)  # истекла — считаем от сегодня
+            # status не передаём: Remnawave сама переводит EXPIRED → ACTIVE, когда новая дата
+            # в будущем, и возвращает пользователя на ноды
+            body["expireAt"] = _iso(base + int(x["days"]) * 86400)
+            done.append(f"+{x['days']} дн. → до {body['expireAt'][:10]}")
+        elif t == "squad_add" and x.get("squad") and x["squad"] not in squads:
+            squads = squads + [x["squad"]]
+            body["activeInternalSquads"] = squads
+            done.append("+ сквад")
+        elif t == "squad_remove" and x.get("squad") in squads:
+            squads = [s for s in squads if s != x["squad"]]
+            body["activeInternalSquads"] = squads
+            done.append("− сквад")
+    if len(body) > 1:
+        await rw.user_update(body)
+    return ", ".join(done) or "нечего менять"
+
+
+async def on_sub_request(u: dict, ua: str):
+    """Вызывается прослойкой на каждое успешное обновление подписки (в фоне)."""
+    autos = [a for a in await event_automations() if ua_matches(a["trigger"], ua)]
+    if not autos:
+        return
+    db = await db_ready()
+    for a in autos:
+        filt = a["trigger"].get("squad") or ""
+        if filt and filt not in squad_ids(u):
+            continue
+        if a["mode"] != "active":
+            async with db.execute("SELECT 1 FROM automation_log WHERE auto_id=? AND user_id=? AND event='would'",
+                                  (a["id"], u["id"])) as cur:
+                if await cur.fetchone():
+                    continue
+            await _log(db, a, u, "would", f"сработала бы · UA: {ua[:100]}")
+            await db.commit()
+            continue
+        cur = await db.execute("INSERT OR IGNORE INTO automation_once VALUES(?,?,?,?)",
+                               (a["id"], u["id"], u.get("username"), int(time.time())))
+        await db.commit()
+        if cur.rowcount == 0:
+            continue  # уже получал — единоразово
+        try:
+            detail = await apply_once(a, u)
+            await _log(db, a, u, "apply", f"{detail} · UA: {ua[:80]}")
+            await add_event("action", "info", f"Автоматизация «{a['name']}»: {u.get('username')} — {detail}")
+        except Exception as e:  # noqa: BLE001 — снимаем отметку, повторится при следующем обновлении
+            await db.execute("DELETE FROM automation_once WHERE auto_id=? AND user_id=?", (a["id"], u["id"]))
+            await _log(db, a, u, "error", f"{e}"[:300])
+            log.warning("event automation %s for %s: %s", a["id"], u.get("username"), e)
+        await db.commit()
 
 
 # ---------------- для прослойки и квот
