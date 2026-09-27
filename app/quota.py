@@ -88,7 +88,8 @@ async def run_rule(rule: dict, force_dry: bool = False) -> dict:
         state = {r["user_id"]: dict(r) for r in await cur.fetchall()}
 
     summary = {"period": key, "reset": reset.isoformat(), "dry": dry, "in_scope": 0,
-               "over": 0, "near": 0, "moved": [], "restored": [], "would_move": [],
+               "over": 0, "near": 0, "moved": [], "restored": [], "restored_limit": [], "would_move": [],
+               "would_restore": [],
                "desc_updated": 0, "errors": []}
     now = int(time.time())
 
@@ -116,8 +117,10 @@ async def run_rule(rule: dict, force_dry: bool = False) -> dict:
         action = None
         added_fb = (st or {}).get("added_fb")
 
-        # 1) новый период (или человека исключили) — возвращаем тех, кого переводили
-        if moved_earlier and (st["moved_period"] != key or uid in exempt):
+        # 1) возвращаем переведённых: новый период, человека исключили или он больше не превышает
+        #    лимит — его подняли посреди периода (или пересчёт трафика дал меньше)
+        new_period = moved_earlier and st["moved_period"] != key
+        if moved_earlier and (new_period or uid in exempt or not over):
             if has_fb and not has_full:                    # сквады в том виде, в каком мы их оставили
                 drop_fb = st.get("added_fb") == 1          # запасной сквад снимаем, только если добавляли сами
                 new_squads = [s for s in squads if not (drop_fb and s == fallback)] + [full]
@@ -147,11 +150,15 @@ async def run_rule(rule: dict, force_dry: bool = False) -> dict:
                                                      f"израсходовал {gb(used)} из {gb(limit)} ГБ — переведён на запасной сквад")
                 except Exception as e:                 # noqa: BLE001
                     summary["errors"].append(f"{u['username']}: {e}")
+        elif action in ("restore", "forget") and dry:
+            summary["would_restore"].append(u["username"])
         elif action in ("restore", "forget") and not dry:
             try:
                 if action == "restore":
                     await rw.user_update({"id": uid, "activeInternalSquads": new_squads})
                     summary["restored"].append(u["username"])
+                    if not new_period and uid not in exempt:
+                        summary["restored_limit"].append(u["username"])
                 moved_now = False
             except Exception as e:                     # noqa: BLE001
                 summary["errors"].append(f"{u['username']}: {e}")
@@ -159,10 +166,9 @@ async def run_rule(rule: dict, force_dry: bool = False) -> dict:
         # текст для {{DESCRIPTION}} — пишем только когда он изменился
         desc = None
         if rule["write_desc"]:
-            in_new_period = action in ("restore", "forget") and not dry
-            tpl = (rule["desc_over"] or DESC_OVER) if (moved_now and not in_new_period) \
-                else (rule["desc_ok"] or DESC_OK)
-            desc = render(tpl, 0 if in_new_period else used, limit, reset)
+            # used — всегда трафик текущего периода: после возврата человек видит «310 из 500»
+            tpl = (rule["desc_over"] or DESC_OVER) if moved_now else (rule["desc_ok"] or DESC_OK)
+            desc = render(tpl, used, limit, reset)
             if write_desc_now and desc != (u.get("description") or ""):
                 try:
                     await rw.user_update({"id": uid, "description": desc})
@@ -184,7 +190,10 @@ async def run_rule(rule: dict, force_dry: bool = False) -> dict:
              added_fb if moved_now else None))
 
     if summary["restored"]:
-        await add_event("quota", "ok", f"Квота «{rule['name']}»: новый период — вернул доступ "
+        by_limit = len(summary["restored_limit"])
+        why = ("лимит больше не превышен" if by_limit == len(summary["restored"])
+               else "новый период" if not by_limit else f"новый период и лимит больше не превышен ({by_limit})")
+        await add_event("quota", "ok", f"Квота «{rule['name']}»: {why} — вернул доступ "
                                        f"{len(summary['restored'])} пользователям")
     await db.execute("UPDATE quota_rules SET last_run=?, last_result=? WHERE id=?",
                      (now, json.dumps(summary, ensure_ascii=False), rule["id"]))

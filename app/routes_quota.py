@@ -119,6 +119,7 @@ async def rule_edit(rid: int, body: RuleIn, user: str = Depends(require_auth)):
         (*values(body), rid))
     await db.commit()
     await add_event("action", "info", f"{user}: изменена квота «{body.name}»")
+    quota.wake()  # новый лимит — сразу пересчитать: поднятый вернёт доступ, сниженный переведёт
     return {"ok": True}
 
 
