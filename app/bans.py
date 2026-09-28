@@ -26,6 +26,7 @@ from starlette.responses import Response
 from .auth import require_auth
 from .db import get_db, kv_get, kv_set
 from .events import add_event
+from .remnawave import RWError, rw
 
 router = APIRouter(prefix="/api/bans", tags=["bans"])
 
@@ -109,12 +110,32 @@ def _b64(s: str) -> str:
     return base64.b64encode(s.encode()).decode()
 
 
-def stub(accept: str, ua: str) -> Response:
+_title: dict = {"ts": 0.0, "v": None}
+
+
+async def profile_title() -> str | None:
+    """profile-title из настроек подписки Remnawave — у забаненного название профиля не меняется.
+    Запрос в Remnawave заглушка не делает, поэтому берём настройку (кеш 5 минут). С подстановками
+    Remnawave вроде {{USERNAME}} их нечем заполнить — тогда заголовок не отдаём вовсе."""
+    if time.monotonic() - _title["ts"] > 300:
+        try:
+            v = ((await rw.subscription_settings()).get("customResponseHeaders") or {}).get("profile-title") or ""
+            if v.startswith("rwEncodeBase64:"):
+                v = "base64:" + _b64(v[len("rwEncodeBase64:"):])
+            _title["v"] = v if v and "{{" not in v else None
+        except RWError:
+            pass  # оставляем прошлое значение
+        _title["ts"] = time.monotonic()
+    return _title["v"]
+
+
+def stub(accept: str, ua: str, title: str | None = None) -> Response:
     """Заглушка в формате клиента: у него на экране появится текст бана вместо серверов."""
     text = _cache["msg"]
     lines = list(dict.fromkeys(ln.strip() for ln in text.split("\n") if ln.strip())) or ["🚫"]
-    headers = {"announce": "base64:" + _b64(text), "profile-title": "base64:" + _b64(lines[0]),
-               "profile-update-interval": "1", "cache-control": "no-store"}
+    headers = {"announce": "base64:" + _b64(text), "profile-update-interval": "1", "cache-control": "no-store"}
+    if title:
+        headers["profile-title"] = title
     if "text/html" in (accept or ""):
         body = "<br>".join(html.escape(ln) for ln in lines)
         return Response(f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"

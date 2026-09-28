@@ -436,7 +436,7 @@ async def handle(scope, receive, send):
         if ban:  # в Remnawave не идём вовсе — она даже не узнает об этом устройстве
             stats["banned"] += 1
             _fire(m.group(1), ua, ip, hwid, ban)
-            await bans.stub(req.headers.get("accept", ""), ua)(scope, receive, send)
+            await bans.stub(req.headers.get("accept", ""), ua, await bans.profile_title())(scope, receive, send)
             return
     try:
         r = await client().request(req.method, target, headers=headers, content=await req.body())
