@@ -620,7 +620,7 @@ const VIEWS = {
           : !wired ? `<div class="banner">Запросы подписок через панель ещё не шли. Поправь блок ${esc(dom)} в Caddyfile — пример внизу.</div>`
           : `<div>
             <p>${Date.now() / 1000 - st.last_request < 600 ? `<span class="tag ok">идёт трафик</span>` : `<span class="tag warn">тишина</span>`} последний запрос ${ago(st.last_request)} · всего ${fmtNum(st.requests)} с ${hhmm(st.since)}</p>
-            <p class="muted">подписок ${fmtNum(st.subs)} · изменено ${fmtNum(st.changed)} · ошибок разбора ${fmtNum(st.errors)} · обрывов от subscription-page ${fmtNum(st.upstream_errors)} <span title="Браузеры subscription-page рвёт сам по правилам SRR — это норма">ⓘ</span>
+            <p class="muted">подписок ${fmtNum(st.subs)} · изменено ${fmtNum(st.changed)} · <a href="#bans">забанено ${fmtNum(st.banned || 0)}</a> · ошибок разбора ${fmtNum(st.errors)} · обрывов от subscription-page ${fmtNum(st.upstream_errors)} <span title="Браузеры subscription-page рвёт сам по правилам SRR — это норма">ⓘ</span>
               ${st.p50_ms !== null ? ` · задержка ${st.p50_ms} мс (p95 ${st.p95_ms} мс)` : ""}</p>
             ${st.last_error ? `<p class="muted">последняя ошибка: <code>${esc(st.last_error)}</code></p>` : ""}</div>`}
       </div>

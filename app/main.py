@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
-from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto
+from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto, bans
 from .auth import (COOKIE, SESSION_TTL, check_code, current_user, fail, forget, require_auth,
                    set_session, setup_or_auth, throttle)
 from .config import ENV_PATH, bootstrap, hash_password, settings, verify_password
@@ -55,6 +55,7 @@ app.include_router(routes_quota.router)
 app.include_router(status_page.router)
 app.include_router(sub_proxy.router)
 app.include_router(routes_auto.router)
+app.include_router(bans.router)
 
 
 @app.exception_handler(RWError)

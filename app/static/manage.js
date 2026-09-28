@@ -1458,7 +1458,9 @@ async function userSheet(uuid, short) {
               <span class="sub">${esc([dv.model, dv.os].filter(Boolean).join(" · "))}</span>
               ${dv.app ? `<span class="sub mono">${esc(dv.app)}</span>` : ""}
               <span class="sub">${ago(dv.updated_at || dv.created_at)}</span></span>
-            <button class="icon-btn danger" data-hwid="${esc(dv.hwid)}" aria-label="Сбросить устройство">${icon("trash")}</button>
+            <span style="display:flex;gap:6px">
+              <button class="icon-btn danger" data-ban-dev="${esc(dv.hwid)}" aria-label="Забанить устройство" title="Забанить HWID — прослойка перестанет отдавать ему подписку на любом аккаунте">${icon("shield")}</button>
+              <button class="icon-btn danger" data-hwid="${esc(dv.hwid)}" aria-label="Сбросить устройство">${icon("trash")}</button></span>
           </div>`).join("")}</div>
           <div class="tile-grid" style="margin-top:10px">${tileBtn("hwid-all", "trash", "Сбросить все", "red")}</div>`
           : `<p class="hint" style="margin:0">Пока ни одного.</p>`)}`,
@@ -1512,6 +1514,11 @@ async function userSheet(uuid, short) {
     "Клиент сможет заново привязать лимит устройств.",
     async () => { await api(`/api/users/${uuid}/devices`, { method: "DELETE" }); toast("Устройства сброшены"); sheet.close(); },
     "Сбросить"));
+  $$("[data-ban-dev]", sheet).forEach((b) => b.addEventListener("click", () => confirmModal("Забанить устройство?",
+    `HWID ${b.dataset.banDev}. Прослойка перестанет отдавать ему подписку — на этом и любом другом аккаунте. `
+    + "Уже скачанные конфиги работают, пока не нажать «Новая подписка».",
+    async () => { await post("/api/bans", { kind: "hwid", value: b.dataset.banDev, note: `устройство ${u.username}` }); toast("Устройство в бане"); },
+    "Забанить")));
   $$("[data-hwid]", sheet).forEach((b) => b.addEventListener("click", () => busy(b, async () => {
     try {
       await api(`/api/users/${uuid}/devices?hwid=${encodeURIComponent(b.dataset.hwid)}`, { method: "DELETE" });
@@ -2519,6 +2526,116 @@ Object.assign(VIEWS, {
           });
         }
       }));
+    },
+  },
+});
+
+/* ============================================================
+   Баны по HWID и IP (в прослойке подписок)
+   ============================================================ */
+let banQuery = "";
+
+async function banAdd(kind, value, note, btn) {
+  const run = async () => {
+    try { const r = await post("/api/bans", { kind, value, note }); toast(`Забанен ${kind === "hwid" ? "HWID" : "IP"} ${r.value}`); redraw(false); }
+    catch (x) { toast(x.message, true); }
+  };
+  return btn ? busy(btn, run) : run();
+}
+
+function banLogRows(rows) {
+  if (!rows.length) return `<p class="empty">Ничего не нашлось.</p>`;
+  const app = (ua) => esc((ua || "").split(" ")[0].slice(0, 40));
+  return `<div class="table-wrap"><table><thead><tr><th>Когда</th><th>Пользователь</th><th>IP</th><th>HWID</th><th>Приложение</th><th></th></tr></thead>
+    <tbody>${rows.map((r) => `<tr>
+      <td class="muted" style="white-space:nowrap">${ago(r.ts)}</td>
+      <td>${esc(r.username || "—")}${r.banned ? ` <span class="tag bad">бан</span>` : ""}</td>
+      <td class="mono">${esc(r.ip || "")}</td>
+      <td class="mono" title="${esc(r.hwid || "")}">${r.hwid ? esc(r.hwid.length > 14 ? r.hwid.slice(0, 14) + "…" : r.hwid) : `<span class="muted">нет</span>`}</td>
+      <td class="muted" title="${esc(r.ua || "")}">${app(r.ua)}</td>
+      <td style="white-space:nowrap">
+        ${r.ip ? `<button class="btn btn-sm btn-ghost" data-ban="ip" data-v="${esc(r.ip)}" data-u="${esc(r.username || "")}">бан IP</button>` : ""}
+        ${r.hwid ? `<button class="btn btn-sm btn-ghost btn-danger" data-ban="hwid" data-v="${esc(r.hwid)}" data-u="${esc(r.username || "")}">бан HWID</button>` : ""}
+      </td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function bindBanButtons(root) {
+  $$("[data-ban]", root).forEach((b) => b.addEventListener("click", () => {
+    const kind = b.dataset.ban, v = b.dataset.v, u = b.dataset.u;
+    const warn = kind === "ip" ? "\n\nIP мобильных операторов делят тысячи людей — бан может задеть чужих. Надёжнее HWID." : "";
+    if (!confirm(`Забанить ${kind === "hwid" ? "устройство" : "IP"} ${v}${u ? ` (${u})` : ""}?${warn}`)) return;
+    banAdd(kind, v, u ? `с аккаунта ${u}` : "", b);
+  }));
+}
+
+Object.assign(VIEWS, {
+  bans: {
+    title: "Баны", sub: "Устройства и адреса, которым прослойка не отдаёт подписку", refresh: 60,
+    load: async () => {
+      const [d, log] = await Promise.all([api("/api/bans"), api(`/api/bans/log?q=${encodeURIComponent(banQuery)}`)]);
+      return { ...d, rows: log };
+    },
+    draw: (d) => `
+      <div class="panel" data-a>
+        <p class="muted" style="margin-top:0">Запрос подписки с забаненного HWID или IP в Remnawave не уходит — клиент видит сообщение ниже вместо серверов.
+          HWID-бан действует на все аккаунты. <b>Уже скачанные конфиги продолжают работать</b>, пока у пользователя не сменить ключи —
+          «Новая подписка» в его карточке. Работает, только когда подписки идут через прослойку.</p>
+        <form class="form" id="ban-f" style="max-width:none">
+          <div class="form-grid">
+            <label>Что банить<select name="kind"><option value="hwid">HWID устройства</option><option value="ip">IP или подсеть</option></select></label>
+            <label>Значение<input name="value" required placeholder="HWID, 1.2.3.4 или 1.2.3.0/24"></label>
+          </div>
+          <label>Заметка<input name="note" maxlength="200" placeholder="за что — необязательно"></label>
+          <div class="form-actions"><button class="btn btn-primary" type="submit">Забанить</button></div>
+        </form>
+      </div>
+      <div class="panel" data-a><h2>В бане · ${d.bans.length}</h2>
+        ${d.bans.length ? `<div class="table-wrap"><table><thead><tr><th>Тип</th><th>Значение</th><th>Заметка</th><th>Срабатываний</th><th></th></tr></thead>
+          <tbody>${d.bans.map((b) => `<tr><td><span class="tag ${b.kind === "hwid" ? "bad" : "warn"}">${b.kind === "hwid" ? "HWID" : "IP"}</span></td>
+            <td class="mono" style="word-break:break-all">${esc(b.value)}</td><td class="muted">${esc(b.note || "")}</td>
+            <td>${b.hits}${b.last_hit ? ` <span class="muted">· ${ago(b.last_hit)}${b.last_user ? ` · ${esc(b.last_user)}` : ""}</span>` : ""}</td>
+            <td><button class="btn btn-sm btn-ghost" data-unban="${b.id}">Снять</button></td></tr>`).join("")}</tbody></table></div>`
+          : `<p class="empty">Пусто.</p>`}
+      </div>
+      <div class="panel" data-a><h2>Что видит забаненный</h2>
+        <form class="form" id="ban-msg" style="max-width:none">
+          <label><textarea name="message" rows="2" maxlength="300">${esc(d.message)}</textarea>
+            <span class="hint">Каждая строка — отдельная «строчка-сервер» в приложении и плашка Happ; в браузере — страница с этим текстом</span></label>
+          <div class="form-actions"><button class="btn" type="submit">Сохранить</button></div>
+        </form>
+      </div>
+      <div class="panel" data-a><h2>Обновления подписки <small>${fmtNum(d.log.c)} за ${d.log.since ? ago(d.log.since).replace(" назад", "") : "—"}</small></h2>
+        <form class="toolbar" id="ban-q"><div class="search">${icon("search")}<input name="q" value="${esc(banQuery)}" placeholder="Ник, IP, HWID или приложение"></div>
+          <button class="btn" type="submit">Найти</button></form>
+        <div id="ban-rows">${banLogRows(d.rows)}</div>
+      </div>`,
+    bind: (d, root) => {
+      $("#ban-f").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const v = Object.fromEntries(new FormData(e.target));
+        if (v.kind === "ip" && !confirm("IP мобильных операторов делят тысячи людей — бан может задеть чужих. Продолжить?")) return;
+        banAdd(v.kind, v.value.trim(), v.note.trim(), e.submitter);
+      });
+      $("#ban-msg").addEventListener("submit", (e) => {
+        e.preventDefault();
+        busy(e.submitter, async () => {
+          try { await api("/api/bans/message", { method: "PUT", body: JSON.stringify({ message: new FormData(e.target).get("message") }) }); toast("Сохранено"); }
+          catch (x) { toast(x.message, true); }
+        });
+      });
+      $("#ban-q").addEventListener("submit", (e) => {
+        e.preventDefault();
+        banQuery = new FormData(e.target).get("q");
+        busy(e.submitter, async () => {
+          $("#ban-rows").innerHTML = banLogRows(await api(`/api/bans/log?q=${encodeURIComponent(banQuery)}`));
+          bindBanButtons($("#ban-rows"));
+        });
+      });
+      $$("[data-unban]", root).forEach((b) => b.addEventListener("click", () => busy(b, async () => {
+        try { await api(`/api/bans/${b.dataset.unban}`, { method: "DELETE" }); toast("Бан снят"); redraw(false); }
+        catch (x) { toast(x.message, true); }
+      })));
+      bindBanButtons(root);
     },
   },
 });

@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import Response
 
-from . import automations, quota
+from . import automations, bans, quota
 from .auth import require_auth
 from .config import settings
 from .db import get_db, kv_get, kv_set
@@ -59,7 +59,7 @@ _client: httpx.AsyncClient | None = None
 _conf: dict = {"ts": 0.0, "v": dict(DEFAULTS)}
 _users: dict = {"ts": 0.0, "by_short": {}, "task": None}
 _rules: dict = {"ts": 0.0, "v": [], "held": {}}
-stats = {"since": time.time(), "requests": 0, "subs": 0, "changed": 0, "errors": 0,
+stats = {"since": time.time(), "requests": 0, "subs": 0, "changed": 0, "errors": 0, "banned": 0,
          "upstream_errors": 0, "last_request": 0, "last_error": "", "ms": []}
 
 
@@ -428,6 +428,16 @@ async def handle(scope, receive, send):
     target = settings.sub_upstream.rstrip("/") + scope.get("raw_path", scope["path"].encode()).decode("latin-1")
     if scope.get("query_string"):
         target += "?" + scope["query_string"].decode("latin-1")
+    m = SHORT_UUID.match(scope["path"])
+    ip, hwid = (req.client.host if req.client else ""), req.headers.get("x-hwid", "")
+    ua = req.headers.get("user-agent", "")
+    if m and req.method in ("GET", "HEAD"):
+        ban = await bans.match(ip, hwid)
+        if ban:  # в Remnawave не идём вовсе — она даже не узнает об этом устройстве
+            stats["banned"] += 1
+            _fire(m.group(1), ua, ip, hwid, ban)
+            await bans.stub(req.headers.get("accept", ""), ua)(scope, receive, send)
+            return
     try:
         r = await client().request(req.method, target, headers=headers, content=await req.body())
     except httpx.HTTPError as e:
@@ -437,10 +447,9 @@ async def handle(scope, receive, send):
         return
     body = r.content
     out_headers = [(k, v) for k, v in r.headers.multi_items() if k.lower() not in HOP]
-    m = SHORT_UUID.match(scope["path"])
     if m and r.status_code == 200 and req.method == "GET":
         stats["subs"] += 1
-        _fire(m.group(1), req.headers.get("user-agent", ""))
+        _fire(m.group(1), ua, ip, hwid)
         try:
             new = await rewrite(m.group(1), r, body, out_headers)
             if new is not None:
@@ -462,15 +471,16 @@ async def handle(scope, receive, send):
 _bg: set = set()
 
 
-def _fire(short: str, ua: str):
-    """Событийные автоматизации — в фоне, выдачу подписки не задерживаем."""
+def _fire(short: str, ua: str, ip: str, hwid: str, ban: dict | None = None):
+    """Журнал обновлений, счётчик бана и событийные автоматизации — в фоне, выдачу не задерживаем."""
     async def run():
         try:
             u = await user_by_short(short)
-            if u and u.get("id"):
+            await bans.log_request(u, ip, hwid, ua, ban)
+            if u and u.get("id") and not ban:
                 await automations.on_sub_request(u, ua)
         except Exception:  # noqa: BLE001
-            log.exception("event automations for %s", short)
+            log.exception("sub request background for %s", short)
     t = asyncio.create_task(run())
     _bg.add(t)
     t.add_done_callback(_bg.discard)
