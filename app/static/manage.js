@@ -2462,9 +2462,9 @@ async function autoLog(a) {
     body: `<h3 style="margin:0 0 8px">${ev ? "Уже получили" : "Сейчас действует"} (${d.held.length})</h3>
       ${d.held.length ? `<p class="muted">${d.held.slice(0, 300).map((h) => esc(h.username)).join(", ")}</p>` : `<p class="muted">Ни на кого.</p>`}
       <h3 style="margin:16px 0 8px">Журнал</h3>
-      ${d.log.length ? `<div class="table-wrap"><table><tbody>${d.log.map((l) => `<tr><td class="muted" style="white-space:nowrap">${new Date(l.ts * 1000).toLocaleString("ru-RU")}</td>
-        <td>${esc(l.username)}</td><td><span class="tag ${EV[l.event]?.[0] || "off"}">${EV[l.event]?.[1] || esc(l.event)}</span></td>
-        <td class="muted">${esc(l.detail || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Пусто.</p>`}`,
+      ${d.log.length ? `<div class="table-wrap"><table class="rtable"><tbody>${d.log.map((l) => `<tr><td class="muted r-head" style="white-space:nowrap">${new Date(l.ts * 1000).toLocaleString("ru-RU")}</td>
+        <td class="r-head"><b>${esc(l.username)}</b></td><td class="r-head"><span class="tag ${EV[l.event]?.[0] || "off"}">${EV[l.event]?.[1] || esc(l.event)}</span></td>
+        <td class="muted r-wide">${esc(l.detail || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Пусто.</p>`}`,
   });
 }
 
@@ -2545,15 +2545,16 @@ async function banAdd(kind, value, note, btn) {
 
 function banLogRows(rows) {
   if (!rows.length) return `<p class="empty">Ничего не нашлось.</p>`;
-  const app = (ua) => esc((ua || "").split(" ")[0].slice(0, 40));
-  return `<div class="table-wrap"><table><thead><tr><th>Когда</th><th>Пользователь</th><th>IP</th><th>HWID</th><th>Приложение</th><th></th></tr></thead>
+  // «Happ/4.4.1/Android/1789…» → «Happ/4.4.1»; полный User-Agent — в подсказке
+  const app = (ua) => esc((ua || "").split(" ")[0].split("/").slice(0, 2).join("/").slice(0, 40));
+  return `<div class="table-wrap"><table class="rtable"><thead><tr><th>Когда</th><th>Пользователь</th><th>IP</th><th>HWID</th><th>Приложение</th><th></th></tr></thead>
     <tbody>${rows.map((r) => `<tr>
-      <td class="muted" style="white-space:nowrap">${ago(r.ts)}</td>
-      <td>${esc(r.username || "—")}${r.banned ? ` <span class="tag bad">бан</span>` : ""}</td>
-      <td class="mono">${esc(r.ip || "")}</td>
-      <td class="mono" title="${esc(r.hwid || "")}">${r.hwid ? esc(r.hwid.length > 14 ? r.hwid.slice(0, 14) + "…" : r.hwid) : `<span class="muted">нет</span>`}</td>
-      <td class="muted" title="${esc(r.ua || "")}">${app(r.ua)}</td>
-      <td style="white-space:nowrap">
+      <td class="muted r-head" style="white-space:nowrap">${ago(r.ts)}</td>
+      <td class="r-head"><b>${esc(r.username || "—")}</b>${r.banned ? ` <span class="tag bad">бан</span>` : ""}</td>
+      <td class="mono" data-label="IP">${esc(r.ip || "")}</td>
+      <td class="mono" data-label="HWID" title="${esc(r.hwid || "")}">${r.hwid ? esc(r.hwid.length > 14 ? r.hwid.slice(0, 14) + "…" : r.hwid) : `<span class="muted">нет</span>`}</td>
+      <td class="muted" data-label="Приложение" title="${esc(r.ua || "")}">${app(r.ua)}</td>
+      <td class="r-actions" style="white-space:nowrap">
         ${r.ip ? `<button class="btn btn-sm btn-ghost" data-ban="ip" data-v="${esc(r.ip)}" data-u="${esc(r.username || "")}">бан IP</button>` : ""}
         ${r.hwid ? `<button class="btn btn-sm btn-ghost btn-danger" data-ban="hwid" data-v="${esc(r.hwid)}" data-u="${esc(r.username || "")}">бан HWID</button>` : ""}
       </td></tr>`).join("")}</tbody></table></div>`;
@@ -2590,11 +2591,12 @@ Object.assign(VIEWS, {
         </form>
       </div>
       <div class="panel" data-a><h2>В бане · ${d.bans.length}</h2>
-        ${d.bans.length ? `<div class="table-wrap"><table><thead><tr><th>Тип</th><th>Значение</th><th>Заметка</th><th>Срабатываний</th><th></th></tr></thead>
-          <tbody>${d.bans.map((b) => `<tr><td><span class="tag ${b.kind === "hwid" ? "bad" : "warn"}">${b.kind === "hwid" ? "HWID" : "IP"}</span></td>
-            <td class="mono" style="word-break:break-all">${esc(b.value)}</td><td class="muted">${esc(b.note || "")}</td>
-            <td>${b.hits}${b.last_hit ? ` <span class="muted">· ${ago(b.last_hit)}${b.last_user ? ` · ${esc(b.last_user)}` : ""}</span>` : ""}</td>
-            <td><button class="btn btn-sm btn-ghost" data-unban="${b.id}">Снять</button></td></tr>`).join("")}</tbody></table></div>`
+        ${d.bans.length ? `<div class="table-wrap"><table class="rtable"><thead><tr><th>Тип</th><th>Значение</th><th>Заметка</th><th>Срабатываний</th><th></th></tr></thead>
+          <tbody>${d.bans.map((b) => `<tr><td class="r-head"><span class="tag ${b.kind === "hwid" ? "bad" : "warn"}">${b.kind === "hwid" ? "HWID" : "IP"}</span></td>
+            <td class="mono r-head" style="word-break:break-all">${esc(b.value)}</td>
+            <td class="muted" data-label="Заметка">${esc(b.note || "—")}</td>
+            <td data-label="Срабатываний"><span>${b.hits}${b.last_hit ? ` <span class="muted">· ${ago(b.last_hit)}${b.last_user ? ` · ${esc(b.last_user)}` : ""}</span>` : ""}</span></td>
+            <td class="r-actions"><button class="btn btn-sm btn-ghost" data-unban="${b.id}">Снять</button></td></tr>`).join("")}</tbody></table></div>`
           : `<p class="empty">Пусто.</p>`}
       </div>
       <div class="panel" data-a><h2>Что видит забаненный</h2>
