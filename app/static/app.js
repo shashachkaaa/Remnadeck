@@ -233,7 +233,7 @@ function startApp() {
   $("#auth").hidden = true; $("#shell").hidden = false;
   $$("#nav a").forEach((a) => { if (!a.querySelector("svg")) a.insertAdjacentHTML("afterbegin", icon(a.dataset.icon)); });
   loadStatus();
-  clearInterval(statusTimer); statusTimer = setInterval(loadStatus, 30000);
+  clearInterval(statusTimer); statusTimer = setInterval(() => { if (!document.hidden) loadStatus(); }, 30000);
   if (!appbarReady) { appbarReady = true; initAppbar(); }
   route();
 }
@@ -348,29 +348,104 @@ async function route() {
   $(".top")?.classList.toggle("bare", !!v.bare);
   $("#actions").innerHTML = "";
   $("#view").innerHTML = skeleton(name);
-  clearInterval(refreshTimer);
+  clearTimeout(refreshTimer);
   await draw(v, my, true);
-  // не перерисовываем под пальцем и под открытым окном — иначе теряется то, с чем работаешь
-  if (v.refresh) refreshTimer = setInterval(() => {
-    if (document.body.classList.contains("row-dragging") || document.body.classList.contains("modal-open")) return;
-    draw(v, my, false);
-  }, v.refresh * 1000);
+  schedule(v, my);
 }
 window.addEventListener("hashchange", route);
 
+/* ---------- живые данные ----------
+   Как в Remnawave (React Query): свой интервал у каждого раздела, следующий запрос — только после
+   ответа на предыдущий, во вкладке в фоне опрос стоит, при возврате — сразу свежие данные.
+   Фоновое обновление не трогает то, с чем человек работает: пауза, пока курсор в поле ввода,
+   в форме несохранённые правки, выделен текст, открыто окно, идёт перетаскивание или раздел
+   сам попросил (v.hold — например, выбраны пользователи). */
+let lastDraw = 0;
+
+function holdReason(v) {
+  const view = $("#view"), a = document.activeElement;
+  if (document.hidden) return "вкладка в фоне";
+  if (document.body.classList.contains("row-dragging")) return "перетаскивание";
+  if (document.body.classList.contains("modal-open")) return "открыто окно";
+  if (a && view.contains(a) && a.matches("input:not([type=checkbox]):not([type=radio]),textarea,select")) return "курсор в поле ввода";
+  if (view.dataset.dirty) return "в форме несохранённые изменения";
+  const sel = getSelection();
+  if (sel && !sel.isCollapsed && view.contains(sel.anchorNode)) return "выделен текст";
+  return v.hold?.() || null;
+}
+
+function schedule(v, token, ms = v.refresh * 1000) {
+  clearTimeout(refreshTimer);
+  if (!v.refresh || token !== navToken) return;
+  refreshTimer = setTimeout(() => tick(v, token), ms);
+}
+
+async function tick(v, token) {
+  if (token !== navToken) return;
+  const why = holdReason(v);
+  const btn = $("#ab-refresh");
+  if (why) {
+    if (btn) btn.title = `Автообновление на паузе: ${why}`;
+    return schedule(v, token, 2000); // проверим снова через пару секунд
+  }
+  if (btn) btn.title = "Обновить раздел";
+  await draw(v, token, false);
+  schedule(v, token);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || $("#shell")?.hidden) return;
+  loadStatus?.();
+  const v = VIEWS[location.hash.slice(1) || "overview"] || VIEWS.overview;
+  if (v.refresh && Date.now() - lastDraw > v.refresh * 1000) tick(v, navToken);
+});
+
+// правка в форме раздела — автообновление её не затирает, пока не сохранят (сохранение перерисует раздел).
+// Поиск и галочки выбора — не правки: у них своя логика
+document.addEventListener("input", (e) => {
+  const t = e.target, view = $("#view");
+  if (!view?.contains(t) || !t.closest("form") || t.matches("[type=search],[data-pick],[data-live]")) return;
+  view.dataset.dirty = "1";
+}, true);
+
+/* что сохранить при фоновой перерисовке: прокрутку, раскрытые блоки, результаты с [data-keep] */
+function snapshot(root) {
+  return {
+    y: window.scrollY,
+    scroll: $$(".table-wrap, .console, [data-scroll]", root).map((el) => [el.scrollLeft, el.scrollTop]),
+    open: $$("details", root).map((d) => d.open),
+    keep: Object.fromEntries($$("[data-keep][id]", root).map((el) => [el.id, el.innerHTML])),
+  };
+}
+function restore(root, s) {
+  $$(".table-wrap, .console, [data-scroll]", root).forEach((el, i) => { if (s.scroll[i]) [el.scrollLeft, el.scrollTop] = s.scroll[i]; });
+  $$("details", root).forEach((d, i) => { if (s.open[i] !== undefined) d.open = s.open[i]; });
+  Object.entries(s.keep).forEach(([id, html]) => { const el = root.querySelector(`#${CSS.escape(id)}`); if (el && html) el.innerHTML = html; });
+  if (Math.abs(window.scrollY - s.y) > 1) window.scrollTo(0, s.y);
+}
+
 async function draw(v, token, first) {
   let data;
+  const btn = $("#ab-refresh");
+  if (!first) btn?.classList.add("syncing");
   try { data = await v.load(); }
   catch (e) {
+    btn?.classList.remove("syncing");
     if (token !== navToken || e.message === "Нужен вход") return;
     if (first) $("#view").innerHTML = `<div class="banner">${esc(e.message)}</div>`;
+    else if (btn) { btn.classList.add("failed"); btn.title = `Не удалось обновить: ${e.message}`; }
     return;
   }
+  btn?.classList.remove("syncing", "failed");
   if (token !== navToken) return;
   const root = $("#view");
+  const snap = first ? null : snapshot(root);
   root.innerHTML = v.draw(data);
+  delete root.dataset.dirty;
   $("#actions").innerHTML = v.actions ? v.actions(data) : "";
   v.bind?.(data, root);
+  if (snap) restore(root, snap);
+  lastDraw = Date.now();
   if (first) animate(root);
 }
 const redraw = (first = true) => draw(VIEWS[location.hash.slice(1) || "overview"] || VIEWS.overview, navToken, first);
@@ -411,7 +486,7 @@ let settingsCache = null;
 
 const VIEWS = {
   overview: {
-    title: "Обзор", sub: "Состояние инфраструктуры в реальном времени", refresh: 30,
+    title: "Обзор", sub: "Состояние инфраструктуры в реальном времени", refresh: 15,
     load: () => api("/api/overview"),
     actions: () => `<span class="muted" style="font-size:13px">Обновлено в ${hhmm(Date.now() / 1000)}</span>`,
     draw: (d) => {
@@ -605,7 +680,7 @@ const VIEWS = {
   },
 
   subproxy: {
-    title: "Прослойка подписок", sub: "RemnaDeck между клиентом и subscription-page: подставляет свои значения в тексты Remnawave, ничего туда не записывая", refresh: 30,
+    title: "Прослойка подписок", sub: "RemnaDeck между клиентом и subscription-page: подставляет свои значения в тексты Remnawave, ничего туда не записывая", refresh: 15,
     load: async () => {
       const [s, texts] = await Promise.all([api("/api/sub-proxy"), api("/api/sub-proxy/texts").catch((e) => ({ error: e.message }))]);
       return { ...s, texts };
@@ -664,7 +739,7 @@ const VIEWS = {
       <div class="panel" data-a><h2>Проверить на пользователе</h2>
         <form class="toolbar" id="pv"><div class="search">${icon("search")}<input name="username" placeholder="Имя пользователя" required></div>
           <button class="btn" type="submit">Показать</button></form>
-        <div id="pv-out"></div>
+        <div id="pv-out" data-keep></div>
       </div>
       <div class="panel" data-a><h2>Caddyfile</h2>
         <p class="muted" style="margin-top:0">Замени блок домена подписок. Если RemnaDeck не отвечает, Caddy сам пойдёт напрямую в subscription-page — подписки не пропадут, просто будут без правок.</p>

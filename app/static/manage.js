@@ -633,7 +633,7 @@ const serverPill = (srv) => srv
 
 Object.assign(VIEWS, {
   nodes: {
-    title: "Ноды", sub: "", refresh: 15, bare: true,
+    title: "Ноды", sub: "", refresh: 10, bare: true,
     load: async () => {
       const [nodes, servers, sites, templates] = await Promise.all([
         api("/api/nodes"), api("/api/servers").catch(() => []),
@@ -713,7 +713,7 @@ Object.assign(VIEWS, {
   },
 
   hosts: {
-    title: "Хосты", sub: "Порядок как в Remnawave — тяни за ручку справа", refresh: 0,
+    title: "Хосты", sub: "Порядок как в Remnawave — тяни за ручку справа", refresh: 30,
     load: () => api("/api/hosts"),
     actions: (rows) => `<span class="muted" style="font-size:13px">${rows.filter((r) => !r.disabled).length} из ${rows.length} включены</span>
       <button class="btn btn-sm" id="h-reach">${icon("globe")}Из России</button>
@@ -752,7 +752,7 @@ Object.assign(VIEWS, {
   },
 
   servers: {
-    title: "Серверы", sub: "", bare: true,
+    title: "Серверы", sub: "", bare: true, refresh: 60,
     load: async () => {
       const [servers, nodes] = await Promise.all([api("/api/servers"), api("/api/nodes").catch(() => [])]);
       return { servers, nodes };
@@ -903,12 +903,20 @@ const tiles = (...items) => `<div class="tile-grid">${items.join("")}</div>`;
 
 const statChip = (ico, value, tone = "") => `<span class="stat-chip ${tone}">${icon(ico)}<b>${value}</b></span>`;
 
-function nodeSheet(n, srv, d) {
-  const sites = srv ? (d.sites || []).filter((s) => s.server_id === srv.id) : [];
+/* окно, которое само обновляется, пока открыто и вкладка видна (как карточка ноды в Remnawave) */
+function liveSheet(sheet, everySec, fn) {
+  const loop = async () => {
+    if (!document.body.contains(sheet)) return;
+    if (!document.hidden) { try { await fn(); } catch { /* временная ошибка — попробуем в следующий раз */ } }
+    if (document.body.contains(sheet)) setTimeout(loop, everySec * 1000);
+  };
+  setTimeout(loop, everySec * 1000);
+}
+
+function nodeDetails(n, srv) {
   const tone = n.state === 1 ? "up" : n.state === -1 ? "off" : "down";
   const pct = n.traffic_limit ? Math.min(100, n.traffic / n.traffic_limit * 100) : null;
-
-  const details = secCard("pulse", "Подробности", `
+  return secCard("pulse", "Подробности", `
     <div class="meter"><b class="big">${fmtBytes(n.traffic)}</b>
       <span class="lim">${pct === null ? "без лимита"
         : `${Math.round(pct)}% из ${fmtBytes(n.traffic_limit)}`}</span></div>
@@ -923,6 +931,11 @@ function nodeSheet(n, srv, d) {
       ${statChip("server", esc(n.country || "—") + " · " + esc(n.address), "blue")}
       ${srv ? statChip("ssh", esc(srv.name), "cyan") : ""}
     </div>`, tone);
+}
+
+function nodeSheet(n, srv, d) {
+  const sites = srv ? (d.sites || []).filter((s) => s.server_id === srv.id) : [];
+  const details = `<div id="node-live">${nodeDetails(n, srv)}</div>`;
 
   const server = srv ? secCard("ssh", "Сервер", `
       ${tiles(
@@ -962,6 +975,15 @@ function nodeSheet(n, srv, d) {
                        : tileBtn("disable", "power", "Выключить", "amber"),
         tileBtn("delete", "trash", "Удалить", "red")))}
       ${server}`,
+  });
+
+  // память, скорость, онлайн, аптайм и статус — вживую, пока карточка открыта
+  liveSheet(sheet, 10, async () => {
+    const fresh = (await api("/api/nodes")).find((x) => x.uuid === n.uuid);
+    if (!fresh) return;
+    $("#node-live", sheet).innerHTML = nodeDetails(fresh, srv);
+    const tag = $(".sheet-head .tag", sheet);
+    if (tag) tag.outerHTML = stateTag(fresh.state);
   });
 
   const act = (name, fn) => $(`[data-a="${name}"]`, sheet)?.addEventListener("click", fn);
@@ -1637,7 +1659,8 @@ async function bulkForm() {
 /* ---------- разделы ---------- */
 Object.assign(VIEWS, {
   users: {
-    title: "Пользователи", sub: "Нажми на строку — карточка, галочка слева — массовые действия",
+    title: "Пользователи", sub: "Нажми на строку — карточка, галочка слева — массовые действия", refresh: 25,
+    hold: () => (picked.size ? "выбраны пользователи" : null), // как в Remnawave: выделение не сбрасываем
     load: () => api(`/api/users?${new URLSearchParams(usersState)}`),
     actions: (d) => `<span class="muted" style="font-size:13px">Всего ${fmtNum(d.all)}</span>
       <button class="btn btn-sm btn-primary" id="u-add">Добавить</button>${refreshBtn}`,
@@ -1674,7 +1697,7 @@ Object.assign(VIEWS, {
   },
 
   squads: {
-    title: "Сквады", sub: "Наборы инбаундов, которые выдаются пользователям",
+    title: "Сквады", sub: "Наборы инбаундов, которые выдаются пользователям", refresh: 30,
     load: async () => {
       const [squads, profiles] = await Promise.all([api("/api/squads"), getProfiles(true)]);
       squadsCache = squads;
@@ -2063,7 +2086,7 @@ function quotaTone(r) {
 
 Object.assign(VIEWS, {
   quotas: {
-    title: "Квоты", sub: "", bare: true,
+    title: "Квоты", sub: "", bare: true, refresh: 30,
     load: async () => {
       const [rules, nodes, squads, iv] = await Promise.all([
         api("/api/quotas"), api("/api/nodes").catch(() => []), getSquads(true),
@@ -2470,7 +2493,7 @@ async function autoLog(a) {
 
 Object.assign(VIEWS, {
   automations: {
-    title: "Автоматизации", sub: "Условие → действия. Когда условие перестаёт выполняться, действия откатываются", refresh: 60,
+    title: "Автоматизации", sub: "Условие → действия. Когда условие перестаёт выполняться, действия откатываются", refresh: 30,
     load: async () => {
       const [list, meta] = await Promise.all([api("/api/automations"), api("/api/automations/meta")]);
       return { list, meta };
@@ -2571,7 +2594,7 @@ function bindBanButtons(root) {
 
 Object.assign(VIEWS, {
   bans: {
-    title: "Баны", sub: "Устройства и адреса, которым прослойка не отдаёт подписку", refresh: 60,
+    title: "Баны", sub: "Устройства и адреса, которым прослойка не отдаёт подписку", refresh: 30,
     load: async () => {
       const [d, log] = await Promise.all([api("/api/bans"), api(`/api/bans/log?q=${encodeURIComponent(banQuery)}`)]);
       return { ...d, rows: log };

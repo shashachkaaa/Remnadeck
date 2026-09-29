@@ -1004,3 +1004,8 @@ em.sq-q { font-style: normal; font-size: 11px; padding: 1px 6px; margin-left: 4p
   table.rtable td.r-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; white-space: normal !important; }
   table.rtable td.r-actions .btn { flex: 1 1 auto; }
 }
+/* шапка: идёт фоновое обновление / не удалось */
+#ab-refresh.syncing svg { animation: absync 1.2s ease-in-out infinite; }
+@keyframes absync { 50% { opacity: .35; } }
+#ab-refresh.failed { color: var(--rose); border-color: rgba(255, 113, 133, .45); }
+@media (prefers-reduced-motion: reduce) { #ab-refresh.syncing svg { animation: none; opacity: .5; } }
