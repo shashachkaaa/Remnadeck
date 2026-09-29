@@ -1209,3 +1209,6 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
   .shell { grid-template-columns: 1fr; }
   .side { margin: 0; top: 0; height: 100dvh; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; }
 }
+/* блоки в окне не сжимаются: окно прокручивается целиком. Без этого у .sec-card с overflow:hidden
+   (нужен для линии сверху) минимальная высота становится 0, и на телефоне содержимое обрезается */
+.modal-body > * { flex-shrink: 0; }
