@@ -1227,3 +1227,7 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
 .kv-rows p:last-child { border-bottom: 0; }
 .kv-rows a { color: var(--cyan-4); text-decoration: none; }
 .mono { font-family: var(--mono); }
+/* шапка окна: название важнее бейджа — длинный бейдж сжимается с многоточием, а не название */
+.sheet-title { flex: 1 1 auto; min-width: 40%; }
+.sheet-head > .tag { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-rows p > span:last-child { text-align: right; overflow-wrap: anywhere; }

@@ -380,12 +380,12 @@ function versionSheet() {
   const canUpdate = v.updater.installed && ["update", "diverged", "unknown"].includes(gh.status);
   const sheet = openSheet({
     title: `RemnaDeck <span class="muted">v${esc(v.version)}</span>`, lead: `<img src="/static/logo.svg" alt="" width="20" height="20">`,
-    tag: `<span class="tag ${state[0]}">${state[1]}</span>`,
     body: `<div class="sec-card"><div class="kv-rows">
+        <p><span class="muted">Статус</span> <span class="tag ${state[0]}">${state[1]}</span></p>
         <p><span class="muted">Коммит</span> ${v.commit ? `<a class="mono" href="${repo}/commit/${esc(v.commit)}" target="_blank" rel="noopener">${esc(v.commit.slice(0, 7))}</a>` : `<span class="muted">неизвестен — собрано без install.sh</span>`}</p>
         <p><span class="muted">Собрано</span> ${v.built_at ? dt(v.built_at * 1000) : "—"}</p>
-        <p><span class="muted">На GitHub</span> ${gh.latest ? `<a class="mono" href="${repo}/commit/${esc(gh.latest.sha)}" target="_blank" rel="noopener">${esc(gh.latest.sha)}</a> · ${dt(gh.latest.date)}` : "—"}</p>
-        <p><span class="muted">Проверено</span> ${ago(gh.checked_at)}${gh.error ? ` · <span style="color:var(--rose)">${esc(gh.error)}</span>` : ""}</p>
+        <p><span class="muted">На GitHub</span> <span>${gh.latest ? `<a class="mono" href="${repo}/commit/${esc(gh.latest.sha)}" target="_blank" rel="noopener">${esc(gh.latest.sha)}</a> · ${dt(gh.latest.date)}` : "—"}</span></p>
+        <p><span class="muted">Проверено</span> <span>${ago(gh.checked_at)}${gh.error ? ` · <span style="color:var(--rose)">${esc(gh.error)}</span>` : ""}</span></p>
       </div></div>
       ${gh.commits.length ? `<div class="sec-card"><h3 style="margin:0 0 10px;font-size:15px">Что нового · ${gh.behind}</h3>
         <div class="mini-list">${gh.commits.map((c) => `<div class="mini-row"><span><b>${esc(c.message)}</b>
