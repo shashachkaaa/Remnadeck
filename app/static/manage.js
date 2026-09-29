@@ -1182,8 +1182,9 @@ function siteSheet(site, d) {
   act("reach", () => reachCheck(list.map((x) => `${x}:443`), `Из России · ${site.domain}`));
   act("again", () => {
     sheet.close();
-    siteForm(d, { server_id: site.server_id, template_id: site.template_id, domain: list.join(", "),
-                  path: site.path, upstream: site.upstream, is_default_server: !!site.is_default_server });
+    const tech = (site.tech_domains || "").split(" ").filter(Boolean);
+    siteForm(d, { server_id: site.server_id, template_id: site.template_id, own: list.filter((x) => !tech.includes(x)).join(", "),
+                  tech: tech.join(", "), path: site.path, upstream: site.upstream, is_default_server: !!site.is_default_server });
   });
   act("drop", () => openModal({
     title: `Снять CDN ${site.domain}?`, submit: "Снять", danger: true,
@@ -1286,67 +1287,67 @@ function templateForm(existing) {
 }
 
 function siteForm(d, preset = {}) {
+  // несколько шаблонов разом: у каждого свой домен (с сертификатом) и техдомены (только server_name)
+  const on = (t) => preset.template_id ? t.id === preset.template_id : false;
   const el = openModal({
     title: "Настроить CDN",
     wide: true,
     submit: "Применить",
-    body: `<div class="form-grid">
-      <label>Сервер<select name="server_id" required ${preset.node ? "disabled" : ""}>
+    body: `<label>Сервер<select name="server_id" required ${preset.node ? "disabled" : ""}>
         ${optList(d.servers.map((s) => [s.id, `${s.name} (${s.host})`]), preset.server_id)}</select>
         ${preset.node ? `<span class="hint">Нода ${esc(preset.node.name)}</span>` : ""}</label>
-      <label>Шаблон<select name="template_id" id="tpl-sel" required>${optList(d.templates.map((t) => [t.id, t.name]), preset.template_id)}</select>
-        <span class="hint" id="tpl-note"></span></label>
-    </div>
-    <label>Домены<input name="domain" required placeholder="vk.example.com, vkontakte.example.org">
-      <span class="hint">Первый — основной, на него выпишется сертификат. Остальные через запятую попадут
-        в server_name и, если не отмечено ниже, в тот же сертификат</span></label>
-    <label class="check"><input type="checkbox" name="cert_primary_only" id="f-cert1">
-      <span>Сертификат только на основной домен — остальные (техдомен Timeweb) только в server_name</span></label>
-    <div class="form-grid">
-      <label>Путь<input name="path" id="f-path" required placeholder="/static/getFile/video/segment.ts">
-        <span class="hint">Ровно тот, что в инбаунде xhttp</span></label>
-      <label>Локальный порт инбаунда<input name="upstream" id="f-port" type="number" min="1" max="65535" value="10085">
-        <span class="hint">Инбаунд слушает 127.0.0.1 на этом порту</span></label>
-    </div>
-    <label class="check"><input type="checkbox" name="is_default_server" id="f-def">
-      <span>default_server — ловить запросы без SNI и с чужим SNI</span></label>
+    <label>Шаблоны<span class="hint">Отметь нужные CDN. У каждого — свой домен, на него выпишется сертификат, и свой конфиг nginx.
+      Технический домен CDN (Timeweb и т. п.) попадёт только в server_name — сертификат на него не выпустить</span></label>
+    <div class="cdn-tpls">${d.templates.map((t) => `
+      <div class="cdn-tpl ${on(t) ? "on" : ""}" data-tid="${t.id}">
+        <label class="check"><input type="checkbox" data-on ${on(t) ? "checked" : ""}>
+          <span><b>${esc(t.name)}</b> <span class="muted mono">${esc(t.default_path || "/")} → ${t.default_port || 10085}</span></span></label>
+        <div class="cdn-tpl-body" ${on(t) ? "" : "hidden"}>
+          <div class="form-grid">
+            <label>Свой домен<input data-f="domains" value="${on(t) ? esc(preset.own || "") : ""}" placeholder="${esc(t.slug)}.example.com">
+              <span class="hint">С сертификатом. Несколько — через запятую</span></label>
+            <label>Техдомены<input data-f="tech" value="${on(t) ? esc(preset.tech || "") : ""}"
+              placeholder="${t.slug === "timeweb" ? "xxxx.cdn.twcstorage.ru" : "необязательно"}">
+              <span class="hint">Только server_name, без сертификата</span></label>
+            <label>Путь<input data-f="path" value="${esc(on(t) && preset.path ? preset.path : t.default_path || "/")}">
+              <span class="hint">Ровно тот, что в инбаунде xhttp</span></label>
+            <label>Порт инбаунда<input data-f="port" type="number" min="1" max="65535" value="${on(t) && preset.upstream ? preset.upstream : t.default_port || 10085}">
+              <span class="hint">Инбаунд слушает 127.0.0.1 на этом порту</span></label>
+          </div>
+          <label class="check"><input type="checkbox" data-f="def" ${(on(t) && preset.upstream ? preset.is_default_server : t.is_default_server) ? "checked" : ""}>
+            <span>default_server — ловить запросы без SNI и с чужим SNI</span></label>
+          ${t.note ? `<span class="hint">${esc(t.note)}</span>` : ""}
+        </div>
+      </div>`).join("")}</div>
     <div class="form-grid">
       <label>E-mail для Let's Encrypt<input name="email" type="email" placeholder="необязательно"></label>
       <label>Токен Cloudflare API<input name="cf_token" type="password" autocomplete="off" placeholder="необязательно">
         <span class="hint">Для домена, который уже за CDN, — единственный рабочий способ: DNS-01</span></label>
     </div>
     <span class="hint">Общий http-конфиг (буферы, реальный IP, keepalive к Xray) панель поставит сама
-      в <code>/etc/nginx/conf.d/rd-cdn-common.conf</code>. Для второго CDN просто повтори с другим доменом.</span>`,
-    onSubmit: async (v) => {
-      const r = await post("/api/cdn/sites", {
-        server_id: Number(v.server_id || preset.server_id || 0),
-        node_uuid: preset.node ? preset.node.uuid : "",
-        template_id: Number(v.template_id),
-        domain: v.domain.trim(), path: v.path.trim(), upstream: Number(v.upstream) || 10085,
-        email: v.email.trim(), cf_token: (v.cf_token || "").trim(),
-        is_default_server: !!v.is_default_server, cert_primary_only: !!v.cert_primary_only,
+      в <code>/etc/nginx/conf.d/rd-cdn-common.conf</code>. Сайты ставятся по очереди одной задачей: не встал один — остальные ставятся.</span>`,
+    onSubmit: async (v, form) => {
+      const items = $$(".cdn-tpl", form).filter((row) => $("[data-on]", row).checked).map((row) => {
+        const f = (k) => $(`[data-f="${k}"]`, row);
+        const t = d.templates.find((x) => String(x.id) === row.dataset.tid);
+        if (!f("domains").value.trim()) throw new Error(`${t.name}: укажи свой домен`);
+        return { template_id: t.id, domains: f("domains").value.trim(), tech_domains: f("tech").value.trim(),
+          path: f("path").value.trim() || "/", upstream: Number(f("port").value) || 10085, is_default_server: f("def").checked };
       });
-      jobConsole(r.job, `CDN ${v.domain.trim().split(/[,\s]+/)[0]}`);
+      if (!items.length) throw new Error("Отметь хотя бы один шаблон");
+      const r = await post("/api/cdn/sites/batch", {
+        server_id: Number(v.server_id || preset.server_id || 0), node_uuid: preset.node ? preset.node.uuid : "",
+        email: v.email.trim(), cf_token: (v.cf_token || "").trim(), items,
+      });
+      jobConsole(r.job, items.length > 1 ? `CDN ×${items.length}` : `CDN ${items[0].domains.split(/[,\s]+/)[0]}`);
     },
   });
-  const sel = $("#tpl-sel", el);
-  const fill = (fromTemplate) => {
-    const t = d.templates.find((x) => String(x.id) === sel.value);
-    if (!t) return;
-    $("#tpl-note", el).textContent = t.note || "";
-    $("#f-cert1", el).checked = t.slug === "timeweb";
-    if (!fromTemplate && preset.domain) {            // повторное применение — значения свои
-      $("#f-path", el).value = preset.path || "/";
-      $("#f-port", el).value = preset.upstream || 10085;
-      $("#f-def", el).checked = !!preset.is_default_server;
-      return;
-    }
-    $("#f-path", el).value = t.default_path || "/";
-    $("#f-port", el).value = t.default_port || 10085;
-    $("#f-def", el).checked = !!t.is_default_server;
-  };
-  sel.addEventListener("change", () => fill(true));
-  fill(false);
+  $$(".cdn-tpl [data-on]", el).forEach((cb) => cb.addEventListener("change", () => {
+    const row = cb.closest(".cdn-tpl");
+    row.classList.toggle("on", cb.checked);
+    $(".cdn-tpl-body", row).hidden = !cb.checked;
+    if (cb.checked) $('[data-f="domains"]', row).focus();
+  }));
 }
 
 /* ============================================================

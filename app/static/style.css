@@ -1236,3 +1236,10 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
 .cert-bar select { flex: 1 1 220px; width: auto; }
 .cert-bar .btn svg { width: 16px; height: 16px; }
 @media (max-width: 560px) { .cert-bar .btn { flex: 1 1 calc(50% - 5px); } }
+/* CDN: несколько шаблонов в одной форме */
+.cdn-tpls { display: grid; gap: 8px; }
+.cdn-tpl { border: 1px solid var(--d4); border-radius: var(--radius); background: var(--surface); transition: border-color .15s; }
+.cdn-tpl.on { border-color: var(--cyan-8); background: rgba(var(--glow), .04); }
+.cdn-tpl > label.check { border: 0; background: transparent; padding: 10px 12px; }
+.cdn-tpl > label.check .muted { font-size: 12px; margin-left: 6px; overflow-wrap: anywhere; }
+.cdn-tpl-body { display: grid; gap: 10px; padding: 0 12px 12px; }

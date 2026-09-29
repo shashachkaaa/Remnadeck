@@ -6,6 +6,7 @@
 """
 import asyncio
 import re
+import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -429,6 +430,104 @@ async def site_add(body: SiteIn, user: str = Depends(require_auth)):
                                      body.email.strip(), body.is_default_server,
                                      body.cf_token.strip(),
                                      domains[:1] if body.cert_primary_only else domains), remember)
+
+
+# ---------------- несколько шаблонов разом: у каждого свой домен (с сертификатом) и техдомены (без)
+DOMAIN_RE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
+
+
+def split_domains(raw: str) -> list[str]:
+    return [d.strip().lower() for d in re.split(r"[,\s]+", raw or "") if d.strip()]
+
+
+class BatchItem(BaseModel):
+    template_id: int
+    domains: str = Field(min_length=3)        # свои, через запятую: на них сертификат
+    tech_domains: str = ""                    # технические (CDN): только server_name
+    path: str = "/"
+    upstream: int = Field(10085, ge=1, le=65535)
+    is_default_server: bool = False
+
+
+class BatchIn(BaseModel):
+    server_id: int = 0
+    node_uuid: str = ""
+    email: str = ""
+    cf_token: str = ""
+    items: list[BatchItem] = Field(min_length=1, max_length=10)
+
+
+@router.post("/cdn/sites/batch")
+async def sites_batch(body: BatchIn, user: str = Depends(require_auth)):
+    srv = await server_by_node(body.node_uuid) if body.node_uuid else await get_server(body.server_id)
+    db = await get_db()
+    async with db.execute("SELECT * FROM cdn_templates") as cur:
+        tpls = {r["id"]: dict(r) for r in await cur.fetchall()}
+    plan, seen = [], set()
+    for it in body.items:
+        tpl = tpls.get(it.template_id)
+        if not tpl:
+            raise HTTPException(404, "Шаблон не найден")
+        own, tech = split_domains(it.domains), split_domains(it.tech_domains)
+        bad = [d for d in own + tech if not DOMAIN_RE.match(d)]
+        if not own or bad:
+            raise HTTPException(400, f"{tpl['name']}: не похоже на домен — {', '.join(bad) or 'пусто'}")
+        if seen & set(own + tech):
+            raise HTTPException(400, f"{tpl['name']}: домен {', '.join(seen & set(own + tech))} уже указан у другого шаблона")
+        seen |= set(own + tech)
+        path = it.path.strip() or "/"
+        if not path.startswith("/"):
+            raise HTTPException(400, f"{tpl['name']}: путь должен начинаться со слэша")
+        slug = f"{tpl['slug']}-{re.sub(r'[^a-z0-9]+', '-', own[0]).strip('-')}"
+        plan.append({"tpl": tpl, "own": own, "tech": tech, "path": path, "port": it.upstream,
+                     "default": it.is_default_server, "slug": slug})
+
+    # каждый сайт — своим скриптом из временного файла: apt и certbot читают stdin и съели бы
+    # скрипт следующего сайта. Упал один — остальные всё равно ставятся, итог в конце
+    parts = ["#!/usr/bin/env bash", "FAIL=0; OK=0"]
+    for i, p in enumerate(plan, 1):
+        script = scripts.cdn_install(p["slug"], p["own"] + p["tech"], p["path"], p["port"], p["tpl"]["body"],
+                                     body.email.strip(), p["default"], body.cf_token.strip(), p["own"])
+        mark = f"RD_SITE_{secrets.token_hex(6)}"
+        parts.append(f"""
+echo; echo "######## {i}/{len(plan)} · {p['tpl']['name']} · {p['own'][0]}"
+T=$(mktemp)
+cat > "$T" <<'{mark}'
+{script}
+{mark}
+if bash "$T" </dev/null; then OK=$((OK + 1)); echo "RD_SITE_OK {p['slug']}"
+else FAIL=$((FAIL + 1)); echo "✗ {p['tpl']['name']} · {p['own'][0]} — не установлен, лог выше"; fi
+rm -f $T""")
+    parts.append(f'echo; echo "######## Итог: установлено $OK из {len(plan)}"; exit $FAIL')
+
+    job = ssh.new_job(f"CDN ×{len(plan)} · {srv['name']}", srv["name"])
+    done: list[str] = []
+    write = job.write
+
+    def spy(text):  # запоминаем успешные сайты по маркерам — лог обрезается, маркеры нет
+        done.extend(ln.split()[1] for ln in str(text).splitlines() if ln.startswith("RD_SITE_OK "))
+        write(text)
+    job.write = spy
+
+    async def run():
+        await ssh.run_job(srv, "\n".join(parts), job)
+        for p in plan:
+            if p["slug"] not in done:
+                continue
+            await db.execute(
+                """INSERT INTO cdn_sites(server_id,template_id,slug,domain,domains,tech_domains,path,upstream,
+                   is_default_server,ts) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(server_id,domain) DO UPDATE SET
+                   template_id=excluded.template_id, slug=excluded.slug, domains=excluded.domains,
+                   tech_domains=excluded.tech_domains, path=excluded.path, upstream=excluded.upstream,
+                   is_default_server=excluded.is_default_server, ts=excluded.ts""",
+                (srv["id"], p["tpl"]["id"], p["slug"], p["own"][0], " ".join(p["own"] + p["tech"]),
+                 " ".join(p["tech"]), p["path"], p["port"], int(p["default"]), int(time.time())))
+        await db.commit()
+
+    asyncio.create_task(run())
+    await add_event("action", "info", f"{user}: CDN на {srv['name']}: "
+                                      + ", ".join(f"{p['tpl']['name']} → {p['own'][0]}" for p in plan))
+    return {"job": job.id}
 
 
 @router.delete("/cdn/sites/{site_id}")

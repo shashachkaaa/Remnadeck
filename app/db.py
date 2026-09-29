@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS cdn_sites(id INTEGER PRIMARY KEY AUTOINCREMENT, serve
 MIGRATIONS = {
     "cdn_templates": {"default_path": "TEXT", "default_port": "INTEGER",
                       "is_default_server": "INTEGER DEFAULT 0"},
-    "cdn_sites": {"domains": "TEXT", "is_default_server": "INTEGER DEFAULT 0"},
+    "cdn_sites": {"domains": "TEXT", "is_default_server": "INTEGER DEFAULT 0", "tech_domains": "TEXT"},
     "servers": {"last_fail": "INTEGER", "last_error": "TEXT"},
     # added_fb: сквад без обхода добавил движок (1) или он был у пользователя сам (0);
     # NULL — перевод был до этой правки, снимать его при возврате нельзя
