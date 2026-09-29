@@ -535,3 +535,113 @@ echo
 echo "Если панель не увидела ноду за минуту — проверь, что $PORT доступен снаружи"
 echo "и что адрес ноды в панели совпадает с IP этого сервера."
 """
+
+
+# ---------------- сертификаты: выпуск и продление с раздела «Сертификаты»
+RENEW_HELPER = """
+# standalone-сертификату (Hysteria2) нужен свободный 80-й порт — nginx гасим только на время
+# его продления; webroot-сертификатам (CDN) nginx, наоборот, нужен работающим
+rd_renew() {
+  local name="$1" flag="${2:-}" auth
+  auth=$(grep -E '^authenticator' "/etc/letsencrypt/renewal/$name.conf" 2>/dev/null | awk -F'= *' '{print $2}' || true)
+  say "$name (${auth:-способ неизвестен})"
+  if [ "$auth" = "standalone" ] && systemctl is-active --quiet nginx; then
+    certbot renew --cert-name "$name" $flag --non-interactive \\
+      --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx"
+  else
+    certbot renew --cert-name "$name" $flag --non-interactive
+  fi
+}
+"""
+
+
+def cert_renew(name: str, force: bool = False) -> str:
+    flag = "--force-renewal" if force else ""
+    return f"""{HEAD}{RENEW_HELPER}
+command -v certbot >/dev/null || {{ echo "certbot не установлен"; exit 1; }}
+rd_renew {q(name)} {flag}
+echo
+certbot certificates --cert-name {q(name)} 2>/dev/null | grep -E 'Domains|Expiry' || true
+"""
+
+
+def cert_renew_all(force: bool = False) -> str:
+    flag = "--force-renewal" if force else ""
+    return f"""{HEAD}{RENEW_HELPER}
+command -v certbot >/dev/null || {{ echo "certbot не установлен"; exit 1; }}
+set +e
+FAIL=0; N=0
+for conf in /etc/letsencrypt/renewal/*.conf; do
+  [ -f "$conf" ] || continue
+  N=$((N + 1))
+  rd_renew "$(basename "$conf" .conf)" {flag} || FAIL=$((FAIL + 1))
+done
+[ $N -eq 0 ] && echo "Сертификатов на сервере нет"
+say "Итог"
+certbot certificates 2>/dev/null | grep -E 'Certificate Name|Expiry' || true
+echo
+[ $FAIL -eq 0 ] && echo "Готово: $N сертификат(ов) проверено" || {{ echo "Не продлилось: $FAIL из $N"; exit 1; }}
+"""
+
+
+def cert_issue(domains: list, email: str = "", cf_token: str = "") -> str:
+    """Новый сертификат на домены: DNS-01 Cloudflare или HTTP-01 standalone с временной
+    остановкой nginx. Перед HTTP-01 — сверка DNS, чтобы не жечь лимиты Let's Encrypt."""
+    reg = f"--email {q(email)}" if email else "--register-unsafely-without-email"
+    primary = domains[0]
+    names = " ".join(domains)
+    dflags = " ".join(f"-d {q(d)}" for d in domains)
+    hook = '--deploy-hook "systemctl reload nginx 2>/dev/null || true"'
+    return f"""{HEAD}{APT}{CERT_HELPERS}
+CF_TOKEN={q(cf_token)}
+if [ -f /etc/letsencrypt/live/{q(primary)}/fullchain.pem ]; then
+  say "Сертификат {primary} уже есть"
+  certbot certificates --cert-name {q(primary)} 2>/dev/null | grep -E 'Domains|Expiry' || true
+  echo "Чтобы обновить его раньше срока — «Продлить» → «Принудительно»."
+  exit 0
+fi
+apt_install certbot dnsutils curl
+if [ -n "$CF_TOKEN" ]; then
+  say "Выпускаю через DNS-01 Cloudflare: {names}"
+  cf_prepare "$CF_TOKEN"
+  certbot certonly --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/rd-cloudflare.ini \\
+    --dns-cloudflare-propagation-seconds 30 {dflags} --cert-name {q(primary)} \\
+    --non-interactive --agree-tos {reg} {hook} || {{
+      echo "DNS-01 не прошёл. Токен должен давать Zone:DNS:Edit на все зоны из списка"; exit 1; }}
+else
+  say "Проверяю домены"
+  BAD=0
+  for d in {names}; do check_dns "$d" || BAD=1; done
+  if [ $BAD -eq 1 ]; then
+    dns_hint
+    echo
+    echo "Ничего не запрашивал — лимиты Let's Encrypt целы."
+    exit 1
+  fi
+  STOPPED=""
+  if ss -ltn 2>/dev/null | grep -q ':80 '; then
+    if systemctl is-active --quiet nginx; then
+      systemctl stop nginx; STOPPED=nginx; echo "Временно остановил nginx — порт 80 нужен certbot"
+    else
+      echo "! Порт 80 занят не nginx, certbot может не подняться:"; ss -ltnp | grep ':80 ' || true
+    fi
+  fi
+  say "Выпускаю по HTTP-01: {names}"
+  set +e
+  certbot certonly --standalone {dflags} --cert-name {q(primary)} --non-interactive --agree-tos {reg} {hook}
+  RC=$?
+  set -e
+  [ -n "$STOPPED" ] && systemctl start nginx || true
+  if [ $RC -ne 0 ]; then
+    echo
+    echo "Не вышло. Частые причины:"
+    echo "  · 80/tcp закрыт облачным фаерволом (GCP, Hetzner, Oracle) — открой у хостера"
+    echo "  · домен за CDN, запрос до сервера не доходит — укажи токен Cloudflare"
+    exit 1
+  fi
+fi
+say "Готово"
+certbot certificates --cert-name {q(primary)} 2>/dev/null | grep -E 'Domains|Expiry|Certificate Path' || true
+echo
+echo "Файлы: /etc/letsencrypt/live/{primary}/fullchain.pem и privkey.pem. Продлевается автоматически."
+"""

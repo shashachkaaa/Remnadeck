@@ -14,7 +14,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from . import ssh
+from . import scripts, ssh
 from .auth import current_user, require_auth
 from .db import get_db
 from .events import add_event
@@ -281,14 +281,36 @@ class RenewIn(BaseModel):
 @router.post("/api/servers/{sid}/cert-renew")
 async def cert_renew(sid: int, body: RenewIn, user: str = Depends(require_auth)):
     srv = await get_server(sid)
-    name = shlex.quote(body.name)
-    flag = " --force-renewal" if body.force else ""
-    script = f"""#!/usr/bin/env bash
-set -e
-echo "== certbot renew --cert-name {body.name}{flag}"
-certbot renew --cert-name {name}{flag} --non-interactive
-echo
-certbot certificates --cert-name {name} 2>/dev/null | grep -E 'Domains|Expiry' || true
-"""
     await add_event("action", "info", f"{user}: продление сертификата {body.name} на {srv['name']}")
-    return spawn(f"Сертификат {body.name} · {srv['name']}", srv, script)
+    return spawn(f"Сертификат {body.name} · {srv['name']}", srv, scripts.cert_renew(body.name, body.force))
+
+
+class RenewAllIn(BaseModel):
+    force: bool = False
+
+
+@router.post("/api/servers/{sid}/cert-renew-all")
+async def cert_renew_all(sid: int, body: RenewAllIn, user: str = Depends(require_auth)):
+    srv = await get_server(sid)
+    await add_event("action", "info", f"{user}: продление всех сертификатов на {srv['name']}")
+    return spawn(f"Продление сертификатов · {srv['name']}", srv, scripts.cert_renew_all(body.force))
+
+
+class IssueIn(BaseModel):
+    domains: str = Field(min_length=3, max_length=600)
+    email: str = ""
+    cf_token: str = ""
+
+
+@router.post("/api/servers/{sid}/cert-issue")
+async def cert_issue(sid: int, body: IssueIn, user: str = Depends(require_auth)):
+    srv = await get_server(sid)
+    domains = [d.strip().lower() for d in re.split(r"[,\s]+", body.domains) if d.strip()]
+    bad = [d for d in domains if not re.match(r"^(\*\.)?[a-z0-9.-]+\.[a-z]{2,}$", d)]
+    if not domains or bad:
+        raise HTTPException(400, f"Не похоже на домен: {', '.join(bad) or 'пусто'}")
+    if any(d.startswith("*.") for d in domains) and not body.cf_token.strip():
+        raise HTTPException(400, "Wildcard (*.домен) выпускается только через DNS-01 — укажи токен Cloudflare")
+    await add_event("action", "info", f"{user}: выпуск сертификата {domains[0]} на {srv['name']}")
+    return spawn(f"Сертификат {domains[0]} · {srv['name']}", srv,
+                 scripts.cert_issue(domains, body.email.strip(), body.cf_token.strip()))

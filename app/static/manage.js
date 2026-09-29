@@ -1995,7 +1995,9 @@ Object.assign(VIEWS, {
     load: () => api("/api/certs"),
     actions: () => "",
     draw: (rows) => {
-      const all = rows.flatMap((r) => r.certs.map((c) => ({ ...c, server: r.server, server_id: r.server_id })))
+      if (certServer && !rows.some((r) => String(r.server_id) === certServer)) certServer = "";
+      const all = rows.filter((r) => !certServer || String(r.server_id) === certServer)
+        .flatMap((r) => r.certs.map((c) => ({ ...c, server: r.server, server_id: r.server_id })))
         .sort((a, b) => a.days - b.days);
       const soon = all.filter((c) => c.days < 14 && c.days >= 0).length;
       const dead = all.filter((c) => c.days < 0).length;
@@ -2009,6 +2011,14 @@ Object.assign(VIEWS, {
         <div class="panel list-head" data-a>
           <div class="list-title"><span class="row-tile big-tile">${icon("shield")}</span><h2>Сертификаты</h2></div>
           <div class="tool-row"><button class="tool-btn cyan" data-refresh aria-label="Опросить заново">${icon("refresh")}</button></div>
+        </div>
+        <div class="panel cert-bar" data-a>
+          <select id="cert-srv" aria-label="Сервер">
+            <option value="">Все серверы · ${rows.length}</option>
+            ${rows.map((r) => `<option value="${r.server_id}" ${String(r.server_id) === certServer ? "selected" : ""}>${esc(r.server)} · ${r.certs.length}</option>`).join("")}
+          </select>
+          <button class="btn btn-primary" id="cert-issue">${icon("plus")}Выпустить</button>
+          <button class="btn" id="cert-renew-all">${icon("refresh")}Продлить все</button>
         </div>
         ${all.length ? `<div class="cards">${all.map((c) => {
           const tone = c.days < 0 ? "down" : c.days < 14 ? "warn" : "up";
@@ -2025,6 +2035,9 @@ Object.assign(VIEWS, {
     },
     bind: (rows, root) => {
       $("[data-refresh]", root)?.addEventListener("click", (e) => busy(e.currentTarget, () => redraw(false)));
+      $("#cert-srv", root).addEventListener("change", (e) => { certServer = e.target.value; redraw(false); });
+      $("#cert-issue", root).addEventListener("click", () => certIssueForm(rows));
+      $("#cert-renew-all", root).addEventListener("click", () => certRenewAllForm(rows));
       $$("[data-cert]", root).forEach((card) => card.addEventListener("click", () => {
         const name = card.dataset.cert, sid = card.dataset.sid;
         openModal({
@@ -2488,6 +2501,51 @@ async function autoLog(a) {
       ${d.log.length ? `<div class="table-wrap"><table class="rtable"><tbody>${d.log.map((l) => `<tr><td class="muted r-head" style="white-space:nowrap">${new Date(l.ts * 1000).toLocaleString("ru-RU")}</td>
         <td class="r-head"><b>${esc(l.username)}</b></td><td class="r-head"><span class="tag ${EV[l.event]?.[0] || "off"}">${EV[l.event]?.[1] || esc(l.event)}</span></td>
         <td class="muted r-wide">${esc(l.detail || "")}</td></tr>`).join("")}</tbody></table></div>` : `<p class="muted">Пусто.</p>`}`,
+  });
+}
+
+/* ---------- сертификаты: выпуск и продление на выбранном сервере ---------- */
+let certServer = "";
+
+const serverSelect = (rows) => `<label>Сервер<select name="sid" required>
+  ${rows.map((r) => `<option value="${r.server_id}" ${String(r.server_id) === certServer ? "selected" : ""}>${esc(r.server)}</option>`).join("")}
+  </select></label>`;
+
+function certIssueForm(rows) {
+  if (!rows.length) return toast("Сначала добавь сервер в разделе «Серверы»", true);
+  openModal({
+    title: "Выпустить сертификат", wide: true, submit: "Выпустить",
+    body: `${serverSelect(rows)}
+      <label>Домены<input name="domains" required placeholder="vpn.example.com, www.vpn.example.com">
+        <span class="hint">Через запятую, первый — основной (так назовётся сертификат). Wildcard <code>*.example.com</code> — только с токеном Cloudflare</span></label>
+      <div class="form-grid">
+        <label>E-mail для Let's Encrypt<input name="email" type="email" placeholder="необязательно"></label>
+        <label>Токен Cloudflare API<input name="cf_token" type="password" autocomplete="off" placeholder="необязательно">
+          <span class="hint">С ним выпуск через DNS-01 — адрес домена не важен (домен за CDN, закрыт 80-й порт)</span></label>
+      </div>
+      <span class="hint">Без токена — HTTP-01: сначала сверка DNS (домен должен смотреть на этот сервер, иначе ничего не запрашиваем и лимиты Let's Encrypt целы),
+        nginx на время выпуска останавливается. Потом сертификат продлевается сам, nginx перечитывает конфиг.</span>`,
+    onSubmit: async (v) => {
+      const r = await post(`/api/servers/${v.sid}/cert-issue`, { domains: v.domains.trim(), email: v.email.trim(), cf_token: (v.cf_token || "").trim() });
+      jobConsole(r.job, `Выпуск · ${v.domains.trim().split(/[,\s]+/)[0]}`);
+    },
+  });
+}
+
+function certRenewAllForm(rows) {
+  if (!rows.length) return toast("Сначала добавь сервер в разделе «Серверы»", true);
+  openModal({
+    title: "Продлить сертификаты", submit: "Продлить",
+    body: `${serverSelect(rows)}
+      <p class="muted" style="margin:0">Все сертификаты на сервере. certbot сам решит, какие пора: продлевает, когда до конца меньше 30 дней.
+        Сертификатам Hysteria2 (standalone) nginx на время освобождает 80-й порт.</p>
+      <label class="check"><input type="checkbox" name="force"><span>Принудительно — даже если срок ещё большой</span></label>
+      <span class="hint">Принудительное продление расходует лимит Let's Encrypt: не больше 5 раз в неделю на один набор доменов.</span>`,
+    onSubmit: async (v) => {
+      const r = await post(`/api/servers/${v.sid}/cert-renew-all`, { force: !!v.force });
+      const name = (rows.find((x) => String(x.server_id) === v.sid) || {}).server || "";
+      jobConsole(r.job, `Продление · ${name}`);
+    },
   });
 }
 

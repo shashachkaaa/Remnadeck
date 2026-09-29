@@ -1231,3 +1231,8 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
 .sheet-title { flex: 1 1 auto; min-width: 40%; }
 .sheet-head > .tag { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kv-rows p > span:last-child { text-align: right; overflow-wrap: anywhere; }
+/* сертификаты: выбор сервера и действия */
+.cert-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 12px 14px; }
+.cert-bar select { flex: 1 1 220px; width: auto; }
+.cert-bar .btn svg { width: 16px; height: 16px; }
+@media (max-width: 560px) { .cert-bar .btn { flex: 1 1 calc(50% - 5px); } }
