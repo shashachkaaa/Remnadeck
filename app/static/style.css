@@ -1212,3 +1212,18 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
 /* блоки в окне не сжимаются: окно прокручивается целиком. Без этого у .sec-card с overflow:hidden
    (нужен для линии сверху) минимальная высота становится 0, и на телефоне содержимое обрезается */
 .modal-body > * { flex-shrink: 0; }
+/* значок версии рядом с логотипом — как у Remnawave: светится, когда есть обновление */
+.brand { flex-wrap: wrap; row-gap: 4px; }
+.version { font: 600 11.5px/1 var(--mono); color: var(--d2); background: var(--d6); border: 1px solid var(--d4);
+  border-radius: 6px; padding: 4px 7px; cursor: pointer; transition: color .15s, border-color .15s; }
+.version:hover { color: var(--d0); border-color: var(--d3); }
+.version.new { color: var(--cyan-4); border-color: var(--cyan-4); animation: glowPulse 3s ease-in-out infinite; }
+.version.dev { color: var(--amber); border-color: rgba(250, 176, 5, .5); }
+@keyframes glowPulse { 50% { box-shadow: 0 0 12px rgba(var(--glow), .55); } }
+.burger.has-update { position: relative; }
+.burger.has-update::after { content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--cyan-4); box-shadow: 0 0 8px rgba(var(--glow), .8); }
+.kv-rows p { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.kv-rows p:last-child { border-bottom: 0; }
+.kv-rows a { color: var(--cyan-4); text-decoration: none; }
+.mono { font-family: var(--mono); }

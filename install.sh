@@ -5,7 +5,7 @@
 #
 # Запущенный так, скрипт сам скачает проект в /opt/remnadeck (другая папка — REMNADECK_DIR=…).
 # Повторный запуск той же командой — обновление: код заменяется, .env и data/ не трогаются.
-# Из папки проекта работает как раньше: sudo bash install.sh
+# Из папки проекта: sudo bash install.sh — пересобрать как есть; --update — сначала скачать свежий код.
 set -euo pipefail
 
 REPO="${REMNADECK_REPO:-shashachkaaa/Remnadeck}"
@@ -19,10 +19,11 @@ ask() { local p="$1" d="${2:-}" v=""; read -rp "$p${d:+ [$d]}: " v </dev/tty || 
 
 [[ $EUID -eq 0 ]] || die "Запусти от root (sudo)"
 
-# ---------------- скачать / обновить код, если запущены не из папки проекта
+# ---------------- скачать / обновить код: запущены не из папки проекта или с --update
 SELF=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)
-if [[ ! -f "$SELF/docker-compose.yml" || ! -d "$SELF/app" ]]; then
-  DIR="${REMNADECK_DIR:-/opt/remnadeck}"
+IN_PROJECT=0; [[ -f "$SELF/docker-compose.yml" && -d "$SELF/app" ]] && IN_PROJECT=1
+if [[ $IN_PROJECT -eq 0 || "${1:-}" == "--update" ]]; then
+  [[ $IN_PROJECT -eq 1 ]] && DIR="$SELF" || DIR="${REMNADECK_DIR:-/opt/remnadeck}"
   mkdir -p "$DIR"
   if [[ -d "$DIR/.git" ]] && command -v git >/dev/null; then
     ok "Обновляю $DIR из git"
@@ -30,11 +31,14 @@ if [[ ! -f "$SELF/docker-compose.yml" || ! -d "$SELF/app" ]]; then
   else
     [[ -f "$DIR/docker-compose.yml" ]] && ok "Обновляю код в $DIR (.env и data/ остаются)" || ok "Скачиваю RemnaDeck в $DIR"
     command -v curl >/dev/null || die "Нужен curl"
+    # качаем конкретный коммит — его же панель покажет как свою версию
+    SHA=$(curl -fsSL "https://api.github.com/repos/$REPO/commits/$BRANCH" | grep -m1 '"sha"' | cut -d'"' -f4 || true)
     # в архиве нет .env и data/ — они в .gitignore, так что настройки не перезапишутся
-    curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH" \
+    curl -fsSL "https://codeload.github.com/$REPO/tar.gz/${SHA:-refs/heads/$BRANCH}" \
       | tar -xz --strip-components=1 -C "$DIR" || die "Не удалось скачать https://github.com/$REPO"
+    [[ -n "$SHA" ]] && echo "$SHA" > "$DIR/.commit"
   fi
-  exec bash "$DIR/install.sh" "$@"
+  exec bash "$DIR/install.sh"
 fi
 
 cd "$SELF"
@@ -100,8 +104,37 @@ build() {
   die "Не удалось собрать образ: Docker Hub и зеркала недоступны"
 }
 mkdir -p data
+
+# версия сборки — её показывает панель и сверяет с GitHub
+COMMIT=""
+if [[ -d .git ]] && command -v git >/dev/null; then COMMIT=$(git rev-parse HEAD 2>/dev/null || true)
+elif [[ -f .commit ]]; then COMMIT=$(cat .commit); fi
+printf '{"commit": "%s", "built_at": %s, "repo": "%s", "branch": "%s"}\n' "$COMMIT" "$(date +%s)" "$REPO" "$BRANCH" > app/build.json
+
 build
 docker compose up -d
+
+# ---------------- обновление по кнопке из панели: панель кладёт data/update.request,
+# systemd на хосте запускает deploy/updater.sh. Контейнеру docker.sock не нужен
+if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then
+  cat > /etc/systemd/system/remnadeck-update.service <<UNIT
+[Unit]
+Description=RemnaDeck: обновление по кнопке из панели
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash $DIR/deploy/updater.sh
+UNIT
+  cat > /etc/systemd/system/remnadeck-update.path <<UNIT
+[Unit]
+Description=RemnaDeck: ждать запрос на обновление
+[Path]
+PathExists=$DIR/data/update.request
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now remnadeck-update.path >/dev/null 2>&1 \
+    && date +%s > data/updater.installed && ok "Обновление по кнопке в панели включено"
+fi
 ok "Контейнер remnadeck запущен (127.0.0.1:$PORT)"
 
 # ---------------- реверс-прокси (Caddy от Remnawave) — только при первой установке

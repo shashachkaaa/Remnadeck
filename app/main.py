@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
-from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto, bans
+from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto, bans, version
+from .version import VERSION
 from .auth import (COOKIE, SESSION_TTL, check_code, current_user, fail, forget, require_auth,
                    set_session, setup_or_auth, throttle)
 from .config import ENV_PATH, bootstrap, hash_password, settings, verify_password
@@ -23,7 +24,6 @@ from .remnawave import Remnawave, RWError, rw
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).parent / "static"
-VERSION = "0.3.0"
 
 
 @asynccontextmanager
@@ -56,6 +56,7 @@ app.include_router(status_page.router)
 app.include_router(sub_proxy.router)
 app.include_router(routes_auto.router)
 app.include_router(bans.router)
+app.include_router(version.router)
 
 
 @app.exception_handler(RWError)

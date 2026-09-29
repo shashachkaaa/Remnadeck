@@ -234,6 +234,7 @@ function startApp() {
   $$("#nav a").forEach((a) => { if (!a.querySelector("svg")) a.insertAdjacentHTML("afterbegin", icon(a.dataset.icon)); });
   loadStatus();
   clearInterval(statusTimer); statusTimer = setInterval(() => { if (!document.hidden) loadStatus(); }, 30000);
+  loadVersion();
   if (!appbarReady) { appbarReady = true; initAppbar(); }
   route();
 }
@@ -279,6 +280,7 @@ function paintAppbar(s) {
 }
 
 function initAppbar() {
+  $("#version")?.addEventListener("click", versionSheet);
   $$("[data-ab-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.abIcon); });
   $("#ab-refresh")?.addEventListener("click", (e) => busy(e.currentTarget, async () => {
     e.currentTarget.classList.add("turning");
@@ -353,6 +355,88 @@ async function route() {
   schedule(v, my);
 }
 window.addEventListener("hashchange", route);
+
+/* ---------- версия и обновление по кнопке (как значок версии в Remnawave) ---------- */
+let versionInfo = null, versionTimer = null;
+
+async function loadVersion(force = false) {
+  try { versionInfo = await api(`/api/version${force ? "?force=true" : ""}`, { noRedirect: true }); } catch { return; }
+  const v = versionInfo, gh = v.github, b = $("#version");
+  if (!b) return;
+  b.hidden = false;
+  b.textContent = `v${v.version}${gh.status === "update" ? " ↑" : ""}`;
+  b.className = `version${gh.status === "update" ? " new" : gh.status === "local" || gh.status === "diverged" ? " dev" : ""}`;
+  b.title = gh.status === "update" ? `Доступно обновление: ${gh.behind} изм.` : `Коммит ${v.commit.slice(0, 7) || "неизвестен"}`;
+  $("#burger")?.classList.toggle("has-update", gh.status === "update");
+  clearTimeout(versionTimer); versionTimer = setTimeout(loadVersion, 30 * 60 * 1000);
+}
+
+function versionSheet() {
+  const v = versionInfo; if (!v) return;
+  const gh = v.github, repo = `https://github.com/${v.repo}`;
+  const dt = (s) => new Date(s).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const state = { latest: ["ok", "актуальная"], update: ["info", `доступно обновление · ${gh.behind}`], local: ["warn", "локальная, не на GitHub"],
+    diverged: ["warn", "разошлась с GitHub"], unknown: ["off", "неизвестно"] }[gh.status] || ["off", gh.status];
+  const canUpdate = v.updater.installed && ["update", "diverged", "unknown"].includes(gh.status);
+  const sheet = openSheet({
+    title: `RemnaDeck <span class="muted">v${esc(v.version)}</span>`, lead: `<img src="/static/logo.svg" alt="" width="20" height="20">`,
+    tag: `<span class="tag ${state[0]}">${state[1]}</span>`,
+    body: `<div class="sec-card"><div class="kv-rows">
+        <p><span class="muted">Коммит</span> ${v.commit ? `<a class="mono" href="${repo}/commit/${esc(v.commit)}" target="_blank" rel="noopener">${esc(v.commit.slice(0, 7))}</a>` : `<span class="muted">неизвестен — собрано без install.sh</span>`}</p>
+        <p><span class="muted">Собрано</span> ${v.built_at ? dt(v.built_at * 1000) : "—"}</p>
+        <p><span class="muted">На GitHub</span> ${gh.latest ? `<a class="mono" href="${repo}/commit/${esc(gh.latest.sha)}" target="_blank" rel="noopener">${esc(gh.latest.sha)}</a> · ${dt(gh.latest.date)}` : "—"}</p>
+        <p><span class="muted">Проверено</span> ${ago(gh.checked_at)}${gh.error ? ` · <span style="color:var(--rose)">${esc(gh.error)}</span>` : ""}</p>
+      </div></div>
+      ${gh.commits.length ? `<div class="sec-card"><h3 style="margin:0 0 10px;font-size:15px">Что нового · ${gh.behind}</h3>
+        <div class="mini-list">${gh.commits.map((c) => `<div class="mini-row"><span><b>${esc(c.message)}</b>
+          <span class="sub mono">${esc(c.sha)} · ${dt(c.date)}</span></span></div>`).join("")}</div></div>` : ""}
+      ${gh.status === "local" ? `<p class="hint" style="margin:0">На сервере стоит версия с коммитами, которых ещё нет на GitHub. Отправь их: <code>cd /opt/remnadeck && git push</code></p>` : ""}
+      <div class="sec-card" id="upd-box" ${v.updater.state === "running" || v.updater.state === "requested" ? "" : "hidden"}>
+        <h3 style="margin:0 0 10px;font-size:15px">Обновление <span class="muted" id="upd-state"></span></h3>
+        <pre class="console" id="upd-log" data-scroll style="max-height:40vh;min-height:120px"></pre></div>
+      <div class="form-actions">
+        ${canUpdate ? `<button class="btn btn-primary" id="upd-go">Обновить</button>` : ""}
+        <button class="btn" id="upd-check">Проверить сейчас</button>
+        <a class="btn btn-ghost" href="${repo}" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      ${v.updater.installed ? "" : `<p class="hint" style="margin:0">Обновление по кнопке включается один раз командой на сервере:
+        <code>cd /opt/remnadeck && sudo bash install.sh --update</code> — дальше хватит кнопки.</p>`}`,
+  });
+  $("#upd-check", sheet).addEventListener("click", (e) => busy(e.currentTarget, async () => {
+    await loadVersion(true); sheet.close(); versionSheet();
+  }));
+  $("#upd-go", sheet)?.addEventListener("click", (e) => {
+    if (!confirm("Обновить панель? Она перезапустится — на ~20 секунд будет недоступна, подписки в это время Caddy отдаёт напрямую.")) return;
+    busy(e.currentTarget, async () => {
+      try { await post("/api/version/update"); } catch (x) { return toast(x.message, true); }
+      e.currentTarget.hidden = true; followUpdate(sheet, v.commit);
+    });
+  });
+  if (v.updater.state === "running" || v.updater.state === "requested") followUpdate(sheet, v.commit);
+}
+
+/* следим за обновлением: лог, пока панель жива; перезапуск — ждём, пока поднимется, и перезагружаемся */
+function followUpdate(sheet, fromCommit) {
+  const box = $("#upd-box", sheet), logEl = $("#upd-log", sheet), st = $("#upd-state", sheet);
+  box.hidden = false;
+  const names = { requested: "ждёт сервер…", running: "идёт…", done: "готово", error: "ошибка", idle: "" };
+  let down = false;
+  const tick = async () => {
+    try {
+      const u = await api("/api/version/update", { noRedirect: true });
+      logEl.textContent = u.log.replace(/\x1b\[[0-9;]*m/g, "") || "…";
+      logEl.scrollTop = logEl.scrollHeight;
+      st.textContent = names[u.state] ?? u.state;
+      if (u.state === "error") return toast("Обновление не удалось — лог в окне", true);
+      if (u.state === "done" && (down || u.commit !== fromCommit)) {
+        toast("Панель обновлена — перезагружаю");
+        return setTimeout(() => location.reload(), 1200);
+      }
+    } catch { down = true; st.textContent = "панель перезапускается…"; }
+    setTimeout(tick, 2000);
+  };
+  tick();
+}
 
 /* ---------- живые данные ----------
    Как в Remnawave (React Query): свой интервал у каждого раздела, следующий запрос — только после
