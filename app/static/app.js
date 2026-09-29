@@ -462,7 +462,7 @@ function trafficChart(points) {
   }).join("");
   const peak = points.reduce((a, b) => (b.bytes > a.bytes ? b : a));
   return `<div class="chart"><svg viewBox="0 0 ${points.length * (w + gap) - gap} ${h}" preserveAspectRatio="none" role="img" aria-label="Трафик по часам">
-    <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#74f7d3"/><stop offset="1" stop-color="#1f8f76" stop-opacity=".45"/></linearGradient></defs>${bars}</svg>
+    <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#3bc9db"/><stop offset="1" stop-color="#0c8599" stop-opacity=".45"/></linearGradient></defs>${bars}</svg>
     <div class="chart-foot"><span>Всего за сутки: ${fmtBytes(total)}</span><span>Пик в ${hhmm(peak.hour_ts)}: ${fmtBytes(peak.bytes)} за час</span></div></div>`;
 }
 

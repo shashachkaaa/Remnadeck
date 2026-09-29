@@ -1,16 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
     <linearGradient id="rdFront" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#63f2cb"/><stop offset=".55" stop-color="#2bd4a8"/><stop offset="1" stop-color="#149a7c"/>
+      <stop offset="0" stop-color="#66d9e8"/><stop offset=".55" stop-color="#15aabf"/><stop offset="1" stop-color="#0b7285"/>
     </linearGradient>
     <linearGradient id="rdShine" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".35" stop-color="#fff" stop-opacity="0"/>
     </linearGradient>
   </defs>
-  <rect x="22" y="6" width="36" height="28" rx="7" fill="#17584a"/>
-  <rect x="15" y="13" width="38" height="29" rx="7.5" fill="#1f8f73"/>
+  <rect x="22" y="6" width="36" height="28" rx="7" fill="#0b4f5c"/>
+  <rect x="15" y="13" width="38" height="29" rx="7.5" fill="#0c8599"/>
   <rect x="7" y="21" width="42" height="33" rx="8.5" fill="url(#rdFront)"/>
   <rect x="7.6" y="21.6" width="40.8" height="31.8" rx="8" fill="none" stroke="url(#rdShine)" stroke-width="1.2"/>
-  <path d="M13.5 38h7.5l3.6-8.2 5.4 15.6 4.4-11.2 2.2 3.8h6.4" fill="none" stroke="#052a22"
+  <path d="M13.5 38h7.5l3.6-8.2 5.4 15.6 4.4-11.2 2.2 3.8h6.4" fill="none" stroke="#032a31"
         stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

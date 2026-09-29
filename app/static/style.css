@@ -1009,3 +1009,203 @@ em.sq-q { font-style: normal; font-size: 11px; padding: 1px 6px; margin-left: 4p
 @keyframes absync { 50% { opacity: .35; } }
 #ab-refresh.failed { color: var(--rose); border-color: rgba(255, 113, 133, .45); }
 @media (prefers-reduced-motion: reduce) { #ab-refresh.syncing svg { animation: none; opacity: .5; } }
+
+/* ================================================================
+   Дизайн Remnawave (Mantine, тёмная палитра GitHub, акцент cyan).
+   Снято с фронтенда Remnawave 3.4: theme — primaryColor cyan, primaryShade 8,
+   Montserrat / Fira Mono, radius md; сайдбар, навигация, карточки — из её CSS-модулей.
+   Слой последний и перекрывает прежние темы.
+   ================================================================ */
+:root {
+  /* палитра dark Remnawave: dark-0 … dark-9 */
+  --d0: #c9d1d9; --d1: #b1bac4; --d2: #8b949e; --d3: #6e7681; --d4: #484f58;
+  --d5: #30363d; --d6: #21262d; --d7: #161b22; --d8: #0d1117; --d9: #010409;
+  --cyan-4: #3bc9db; --cyan-6: #15aabf; --cyan-8: #0c8599; --glow: 6, 182, 212; /* #06b6d4 */
+  --blue-4: #4dabf7; --blue-5: #339af0;
+
+  --bg: var(--d7);
+  --side: var(--d8);
+  --surface: #ffffff05;
+  --surface-2: var(--d6);
+  --card: linear-gradient(135deg, var(--d6) 0%, var(--d7) 100%);
+  --line: #ffffff14;
+  --line-strong: var(--d4);
+  --text: var(--d0);
+  --bright: #ffffff;
+  --muted: var(--d2);
+  --accent: var(--cyan-4);          /* активное: пункт меню, фокус, ссылки */
+  --accent-filled: var(--cyan-8);   /* кнопка primary */
+  --mint: #20c997;                  /* «в порядке»: на связи, активен (teal Mantine) */
+  --mint-deep: #0ca678;
+  --amber: #fab005;
+  --rose: #fa5252;
+  --sky: var(--blue-5);
+  --violet: #9775fa;
+  --cyan: #22b8cf;
+  --body: "Montserrat", "Segoe UI", system-ui, sans-serif;
+  --display: var(--body);
+  --mono: "Fira Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 8px;
+  --radius-lg: 16px;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--body); font-size: 14.5px; }
+h1, h2, h3 { font-family: var(--body); font-weight: 600; letter-spacing: 0; color: var(--bright); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+a { color: inherit; }
+.muted, .hint { color: var(--muted); }
+code { background: var(--d8); border-radius: 4px; padding: 1px 5px; font-size: .9em; }
+
+/* ---------- каркас: плавающий сайдбар, как у Remnawave ---------- */
+.shell { grid-template-columns: calc(var(--side-w) + 12px) 1fr; }
+.side { top: 12px; margin: 12px 0 12px 12px; height: calc(100dvh - 24px); border-radius: var(--radius-lg);
+  border: 1px solid var(--line); background: linear-gradient(135deg, var(--d8) 0%, var(--d7) 100%);
+  box-shadow: 0 1px 1px #00000013; backdrop-filter: none; isolation: isolate; }
+.side::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1;
+  background: radial-gradient(circle at 20% 20%, rgba(var(--glow), .1) 0%, transparent 50%); }
+.side-foot .conn { background: var(--surface); border-color: var(--line); border-radius: var(--radius); }
+
+/* заголовки групп: капс, полоска cyan→blue */
+.nav-group { margin: 18px 0 6px; padding-left: 26px; position: relative; opacity: 1;
+  font: 600 12px/1rem var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--d2); }
+.nav-group::before { content: ""; position: absolute; left: 14px; top: 2px; width: 3px; height: 12px; border-radius: 2px;
+  background: linear-gradient(45deg, var(--cyan-4), var(--blue-4)); opacity: 1; }
+.nav-group:first-of-type { margin-top: 4px; }
+
+/* пункты: кромки слева и справа у активного, сдвиг, свечение иконки */
+.nav { gap: 2px; }
+.nav a { width: calc(100% - 8px); padding: 8px 12px; border-radius: var(--radius); font-size: 14px; font-weight: 500;
+  color: var(--d1); border-left: 3px solid transparent; border-right: 3px solid transparent; overflow: hidden;
+  transition: all .2s cubic-bezier(.4, 0, .2, 1); }
+.nav a::before { content: ""; position: absolute; inset: 0; opacity: 0; z-index: -1; transition: opacity .2s;
+  background: linear-gradient(135deg, transparent 0%, rgba(var(--glow), .05) 50%, transparent 100%); }
+.nav a:hover { color: var(--bright); transform: translateX(2px); box-shadow: 0 2px 8px #0000001a, 0 1px 4px #0000000d; }
+.nav a:hover::before { opacity: 1; }
+.nav a svg { width: 20px; height: 20px; transition: all .2s cubic-bezier(.4, 0, .2, 1); }
+.nav a:hover svg { transform: scale(1.1); filter: drop-shadow(0 2px 4px rgba(var(--glow), .3)); }
+.nav a.active { color: var(--bright); transform: translateX(2px); box-shadow: none;
+  border-left-color: var(--cyan-4); border-right-color: var(--cyan-4);
+  background: linear-gradient(135deg, rgba(var(--glow), .15) 0%, rgba(var(--glow), .1) 100%); }
+.nav a.active svg { color: var(--cyan-4); }
+.badge { color: var(--accent); font-family: var(--mono); }
+.badge.bad { color: #fff; background: var(--rose); }
+
+/* логотип и аватар в цветах Remnawave */
+.wordmark b { color: var(--cyan-4); }
+.mark { filter: drop-shadow(0 4px 10px rgba(var(--glow), .25)); }
+.avatar { background: linear-gradient(135deg, var(--cyan-4), var(--cyan-8)); color: #fff; border-radius: 50%; font-family: var(--body); }
+
+/* шапка страницы и закреплённая шапка */
+.top h1 { font-size: 26px; font-weight: 600; }
+.appbar.scrolled { background: rgba(22, 27, 34, .88); border-bottom-color: var(--line); box-shadow: 0 6px 20px rgba(0, 0, 0, .3); }
+.ab-btn { border-radius: var(--radius); border-color: var(--d4); background: var(--d6); font-family: var(--mono); color: var(--d0); }
+.ab-btn:hover { background: var(--d5); }
+.ab-conn.bad { color: #ffa8a8; border-color: rgba(250, 82, 82, .45); background: rgba(250, 82, 82, .12); }
+
+/* ---------- карточки: Paper Remnawave (#ffffff05 + рамка #ffffff14) и градиентные секции ---------- */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: none; backdrop-filter: none; }
+.panel h2 { font-size: 16px; font-weight: 600; color: var(--bright); }
+.panel h2 small { color: var(--muted); font-weight: 500; }
+.kpi { background: var(--card); border: 1px solid var(--d4); border-radius: var(--radius-lg); }
+.kpi p { font-size: 14px; font-weight: 500; color: var(--muted); letter-spacing: .01em; }
+.kpi .num { font: 700 24px/1.2 var(--mono); color: var(--bright); letter-spacing: 0; }
+.kpi .num small { color: var(--muted); font-weight: 500; }
+.kpi .tile, .row-tile, .sec-tile { border-radius: var(--radius); }
+
+/* строки нод/хостов: градиент, рамка dark-4, синяя рамка при наведении (nodeRow) */
+.card-row { border-radius: var(--radius); border: 1px solid var(--d4); background: var(--card);
+  box-shadow: none; padding: 12px 16px; }
+.card-row:hover { transform: none; border-color: var(--blue-5); box-shadow: none; }
+.card-row.up { border-color: var(--d4); background: var(--card); box-shadow: inset 3px 0 0 var(--mint); }
+.card-row.up:hover, .card-row.down:hover { border-color: var(--blue-5); }
+.card-row.down { border-color: var(--d4); background: var(--card); box-shadow: inset 3px 0 0 var(--rose); }
+.card-row.off { opacity: .6; }
+.card-row:focus-visible { border-color: var(--accent); }
+.cards { gap: 6px; }
+
+/* секции карточек (нода, пользователь): градиент + тонкая акцентная линия сверху */
+.sec-card { position: relative; overflow: hidden; background: var(--card); border: 1px solid var(--d4); border-radius: var(--radius); }
+.sec-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px; pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, var(--section-accent, var(--cyan-6)) 50%, transparent 100%); }
+.sec-card.up { --section-accent: var(--mint); border-color: var(--d4); }
+.sec-card.down { --section-accent: var(--rose); border-color: var(--d4); }
+
+/* ---------- кнопки: filled cyan-8, default dark-6, subtle, light red ---------- */
+.btn { height: 36px; padding: 0 18px; border-radius: var(--radius); font: 600 14px var(--body);
+  border: 1px solid var(--d4); background: var(--d6); color: var(--d0); box-shadow: none; transition: background .15s, border-color .15s, color .15s; }
+.btn:hover { background: var(--d5); border-color: var(--d4); }
+.btn:active { transform: translateY(1px); }
+.btn-sm { height: 30px; padding: 0 12px; font-size: 13px; }
+.btn-primary { background: var(--accent-filled); border-color: var(--accent-filled); color: #fff; box-shadow: none; }
+.btn-primary:hover { background: #0b7285; border-color: #0b7285; }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--d1); }
+.btn-ghost:hover { background: rgba(255, 255, 255, .04); color: var(--bright); border-color: transparent; }
+.btn-danger { background: rgba(250, 82, 82, .12); border-color: transparent; color: #ff8787; }
+.btn-danger:hover { background: rgba(250, 82, 82, .2); color: #ffa8a8; border-color: transparent; }
+.btn-ghost.btn-danger { background: transparent; }
+.btn-ghost.btn-danger:hover { background: rgba(250, 82, 82, .12); }
+.btn-accent { background: rgba(var(--glow), .12); color: var(--cyan-4); border-color: transparent; }
+.icon-btn { border-radius: var(--radius); border: 1px solid var(--d4); background: var(--d6); color: var(--d1); }
+.icon-btn:hover { background: var(--d5); color: var(--bright); }
+.icon-btn.danger:hover { color: #ff8787; }
+.tool-btn { border-radius: var(--radius); }
+
+/* ---------- поля: dark-6, рамка dark-4, фокус — cyan ---------- */
+input, select, textarea { font-family: var(--body); font-size: 14px; background: var(--d6); color: var(--d0);
+  border: 1px solid var(--d4); border-radius: var(--radius); }
+input::placeholder, textarea::placeholder { color: var(--d3); }
+input:focus, select:focus, textarea:focus { border-color: var(--accent-filled); box-shadow: none; outline: none; }
+label { color: var(--d1); font-weight: 500; font-size: 14px; }
+.hint { font-size: 12.5px; }
+label.check { background: transparent; border-color: var(--d4); border-radius: var(--radius); }
+label.check:hover { border-color: var(--d3); background: rgba(255, 255, 255, .02); }
+label.check input, input[type=checkbox], input[type=radio] { accent-color: var(--accent-filled); }
+.search input { background: var(--d6); }
+
+/* ---------- бейджи: Mantine light — капс, жирные, pill ---------- */
+.tag { font: 700 11px/1.6 var(--body); letter-spacing: .03em; text-transform: uppercase; padding: 1px 9px;
+  border-radius: 999px; --c: var(--d2); color: var(--c); background: color-mix(in srgb, var(--c) 15%, transparent); }
+.tag.ok { --c: #38d9a9; }
+.tag.bad { --c: #ff8787; }
+.tag.warn { --c: #ffd43b; }
+.tag.info { --c: var(--blue-4); }
+.tag.off { --c: var(--d2); background: rgba(139, 148, 158, .12); }
+.dot.ok { background: var(--mint); box-shadow: 0 0 8px var(--mint); }
+
+/* ---------- переключатели (SegmentedControl) ---------- */
+.seg { background: var(--d6); border: 1px solid var(--d4); border-radius: var(--radius); padding: 3px; }
+.seg button { font: 500 13px var(--body); color: var(--d2); border-radius: 6px; transition: color .15s, background .2s; }
+.seg button:hover { color: var(--d0); }
+.seg button.on { background: var(--d5); color: var(--cyan-4); box-shadow: none; }
+.seg button b { color: inherit; font-family: var(--mono); opacity: .85; }
+
+/* ---------- таблицы: подсветка строки при наведении ---------- */
+table { font-size: 14px; }
+th { color: var(--d0); font-weight: 700; font-size: 13.5px; border-bottom-color: var(--d4); }
+td { border-bottom-color: var(--d5); }
+tbody tr { transition: background .12s; }
+tbody tr:hover { background: rgba(48, 54, 61, .55); }
+
+/* ---------- окна: как Modal Remnawave, фон с блюром ---------- */
+.modal-wrap { background: rgba(1, 4, 9, .6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+.modal { background: var(--d7); border: 1px solid var(--d4); border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .4), 0 2px 8px rgba(0, 0, 0, .2); }
+.modal header h3, .sheet-title h3 { font-size: 18px; font-weight: 600; color: var(--bright); }
+.console { background: var(--d8); border-radius: var(--radius); }
+
+/* ---------- мелочи ---------- */
+.toast { background: var(--d6); border: 1px solid var(--d4); border-radius: var(--radius); color: var(--d0);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .4); font-family: var(--body); }
+.banner { border-radius: var(--radius); border-color: rgba(250, 82, 82, .4); background: rgba(250, 82, 82, .08); }
+.bar { background: var(--d6); }
+.bar i { background: linear-gradient(90deg, var(--cyan-8), var(--cyan-4)); }
+.chip, .stat-chip, .pill { border-radius: var(--radius); }
+.mini-row, .bulk-bar, .copy-row, details.more, .auto-act { border-radius: var(--radius); }
+.auth-card { background: var(--card); border: 1px solid var(--d4); border-radius: var(--radius-lg); }
+.t-rd { color: var(--cyan-4); }
+.env-note { color: var(--muted); }
+table.rtable tr { border-radius: var(--radius); border-color: var(--d4); background: var(--card); }
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  .side { margin: 0; top: 0; height: 100dvh; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; }
+}

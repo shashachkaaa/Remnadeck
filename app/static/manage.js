@@ -1888,8 +1888,8 @@ async function openTerminal(srv) {
   term = new window.Terminal({
     cursorBlink: true, fontSize: window.innerWidth < 720 ? 12 : 13, scrollback: 5000,
     fontFamily: '"JetBrains Mono", ui-monospace, Menlo, monospace',
-    theme: { background: "#07090c", foreground: "#e6edf3", cursor: "#2bd4a8", selectionBackground: "#2bd4a855",
-             green: "#2bd4a8", brightGreen: "#5ff0c8", blue: "#4c8dff", cyan: "#39c5cf", red: "#f85149", yellow: "#f0b73e" },
+    theme: { background: "#0d1117", foreground: "#c9d1d9", cursor: "#3bc9db", selectionBackground: "#3bc9db44",
+             green: "#20c997", brightGreen: "#63e6be", blue: "#4dabf7", cyan: "#3bc9db", red: "#fa5252", yellow: "#fab005" },
   });
   const fit = new window.FitAddon.FitAddon();
   term.loadAddon(fit);
