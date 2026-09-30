@@ -134,6 +134,29 @@ WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload && systemctl enable --now remnadeck-update.path >/dev/null 2>&1 \
     && date +%s > data/updater.installed && ok "Обновление по кнопке в панели включено"
+
+  # Bedolaga (бот и кабинет) по кнопке: так же — панель кладёт data/bedolaga.request, делает deploy/bedolaga.sh
+  cat > /etc/systemd/system/remnadeck-bedolaga.service <<UNIT
+[Unit]
+Description=RemnaDeck: обновление бота и кабинета Bedolaga по кнопке из панели
+[Service]
+Type=oneshot
+TimeoutStartSec=3600
+ExecStart=/usr/bin/env bash $DIR/deploy/bedolaga.sh --request
+UNIT
+  cat > /etc/systemd/system/remnadeck-bedolaga.path <<UNIT
+[Unit]
+Description=RemnaDeck: ждать запрос по Bedolaga
+[Path]
+PathExists=$DIR/data/bedolaga.request
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now remnadeck-bedolaga.path >/dev/null 2>&1 \
+    && date +%s > data/bedolaga.installed
+  # найти бота и кабинет сразу — пункт «Bedolaga» в меню появится, только если они есть
+  bash deploy/bedolaga.sh detect >/dev/null 2>&1 && grep -q '"bot":{\|"cabinet":{' data/bedolaga.json \
+    && ok "Найден Bedolaga — обновлять бота и кабинет можно из панели (раздел «Bedolaga»)" || true
 fi
 ok "Контейнер remnadeck запущен (127.0.0.1:$PORT)"
 

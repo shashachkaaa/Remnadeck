@@ -23,7 +23,7 @@ from .events import add_event
 
 router = APIRouter(prefix="/api/version", tags=["version"])
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 BUILD = Path(__file__).parent / "build.json"
 _cache: dict = {"ts": 0.0, "v": None}
 

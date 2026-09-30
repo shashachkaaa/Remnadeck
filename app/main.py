@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 
-from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto, bans, version
+from . import poller, ssh, quota, routes_infra, routes_live, routes_quota, routes_rw, routes_users, status_page, sub_proxy, automations, routes_auto, bans, version, bedolaga
 from .version import VERSION
 from .auth import (COOKIE, SESSION_TTL, check_code, current_user, fail, forget, require_auth,
                    set_session, setup_or_auth, throttle)
@@ -57,6 +57,7 @@ app.include_router(sub_proxy.router)
 app.include_router(routes_auto.router)
 app.include_router(bans.router)
 app.include_router(version.router)
+app.include_router(bedolaga.router)
 
 
 @app.exception_handler(RWError)
@@ -238,7 +239,8 @@ async def status(_: str = Depends(require_auth)):
     running = [j for j in ssh.JOBS.values() if j.status == "running"]
     return {"remnawave": rw_state, "incidents_24h": incidents, "nodes": nodes, "user": settings.admin_user,
             "jobs_running": len(running), "job_last": running[-1].id if running else None,
-            "job_title": running[-1].title if running else None}
+            "job_title": running[-1].title if running else None,
+            "bedolaga": bedolaga.present()}   # пункт «Bedolaga» в меню — только если бот или кабинет есть на сервере
 
 
 # ---------------- ноды

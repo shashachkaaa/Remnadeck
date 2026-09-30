@@ -29,6 +29,7 @@ const dayLabel = (ts) => {
 const LEVEL = { bad: "сбой", warn: "внимание", ok: "норма", info: "действие" };
 
 const ICONS = {
+  box: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   server: '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6H21"/>',
@@ -246,6 +247,9 @@ async function loadStatus() {
     $("#avatar").textContent = (s.user || "?").slice(0, 1).toUpperCase();
     $("#b-nodes").textContent = s.nodes ?? "";
     $("#b-events").textContent = s.incidents_24h || "";
+    // «Bedolaga» в меню — только если бот или кабинет найдены на этом сервере
+    const bd = $("#nav-bedolaga");
+    if (bd && bd.hidden === !!s.bedolaga) { bd.hidden = !s.bedolaga; movePill(); }
     $("#conn").innerHTML = s.remnawave.ok
       ? `<span class="dot ok live"></span><span>Remnawave <b>${s.remnawave.latency_ms} мс</b></span>`
       : `<span class="dot bad"></span><span>Remnawave <b>нет связи</b></span>`;

@@ -1243,3 +1243,15 @@ table.rtable tr { border-radius: var(--radius); border-color: var(--d4); backgro
 .cdn-tpl > label.check { border: 0; background: transparent; padding: 10px 12px; }
 .cdn-tpl > label.check .muted { font-size: 12px; margin-left: 6px; overflow-wrap: anywhere; }
 .cdn-tpl-body { display: grid; gap: 10px; padding: 0 12px 12px; }
+
+/* ---------- Bedolaga: заметки к релизам ---------- */
+.md-notes h3 { margin: 0 0 8px; font-size: 15px; }
+.md-notes h4 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.md-notes h4.warn { color: var(--amber); }
+.md-notes ul { margin: 0; padding-left: 18px; }
+.md-notes li, .md-notes p { margin: 4px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.md-notes a { color: var(--accent, var(--cyan)); }
+.bd-steps { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.bd-steps li { margin: 3px 0; }
+details.bd-notes > summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+details.bd-notes .sec-card + .sec-card { margin-top: 10px; }

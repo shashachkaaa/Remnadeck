@@ -2723,3 +2723,222 @@ Object.assign(VIEWS, {
     },
   },
 });
+
+/* ============================================================
+   Bedolaga: бот и кабинет — версии и обновление по кнопке.
+   Делает deploy/bedolaga.sh на хосте; панель только просит и показывает ход.
+   ============================================================ */
+const BD_STATUS = {
+  latest: ["ok", "актуальная"], update: ["info", "есть обновление"], ahead: ["off", "новее релиза"], unknown: ["off", "неизвестно"],
+};
+const BD_ACTION = { bot: "Обновление бота", cabinet: "Обновление кабинета", custom: "Слой правок кабинета", rollback: "Откат кабинета" };
+const bdDate = (s) => (s ? new Date(typeof s === "number" ? s * 1000 : s).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }) : "—");
+const bdSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} МБ` : `${Math.max(1, Math.round(b / 1024))} КБ`);
+
+/* заметки к релизам с GitHub: заголовки, списки, жирный, ссылки — остальное текстом */
+function mdLite(src) {
+  const inline = (s) => esc(s)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, t, u) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  let out = "", list = false;
+  for (const line of String(src || "").split("\n")) {
+    const li = line.match(/^\s*[*-]\s+(.*)/), h = line.match(/^(#{1,4})\s+(.*)/);
+    if (!li && list) { out += "</ul>"; list = false; }
+    if (li) { if (!list) { out += "<ul>"; list = true; } out += `<li>${inline(li[1])}</li>`; }
+    else if (h) out += `<h4 class="${/BREAKING|⚠/i.test(h[2]) ? "warn" : ""}">${inline(h[2])}</h4>`;
+    else if (line.trim()) out += `<p>${inline(line)}</p>`;
+  }
+  return out + (list ? "</ul>" : "");
+}
+const bdBreaking = (rels) => rels.some((r) => /BREAKING|⚠/i.test(r.body || ""));
+const bdNotes = (rels) => rels.length ? rels.map((r) => `<div class="sec-card md-notes">
+    <h3><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.tag)}</a> <span class="muted">${bdDate(r.date)}</span></h3>
+    ${mdLite(r.body) || `<p class="muted">Без описания</p>`}</div>`).join("")
+  : `<p class="muted" style="margin:0">Заметок нет.</p>`;
+
+function bdTag(gh) {
+  if (!gh) return "";
+  const [tone, text] = BD_STATUS[gh.status] || BD_STATUS.unknown;
+  return `<span class="tag ${tone}">${gh.status === "update" ? `доступна ${esc(gh.latest.tag)}` : text}</span>`;
+}
+const bdCommit = (repo, sha) => (sha ? `<a class="mono" href="https://github.com/${esc(repo)}/commit/${esc(sha)}" target="_blank" rel="noopener">${esc(sha.slice(0, 7))}</a>` : "");
+
+function bdBotCard(b, gh, busyNow) {
+  const health = b.status === "running" ? (b.health === "healthy" || !b.health ? ["ok", b.health || "работает"] : ["warn", b.health]) : ["bad", b.status];
+  const last = b.backups[0];
+  return `<div class="panel" data-a>
+    <h2>Бот ${bdTag(gh)}</h2>
+    <div class="kv-rows">
+      <p><span class="muted">Версия</span> <span>v${esc(b.version || "?")} ${bdCommit(gh?.repo, b.commit)}</span></p>
+      ${gh?.latest ? `<p><span class="muted">Последний релиз</span> <span>${esc(gh.latest.tag)} · ${bdDate(gh.latest.date)}</span></p>` : ""}
+      <p><span class="muted">Контейнер</span> <span><span class="mono">${esc(b.container)}</span> <span class="tag ${health[0]}">${esc(health[1])}</span></span></p>
+      <p><span class="muted">Папка</span> <span class="mono">${esc(b.dir)}</span></p>
+      ${b.dirty.length ? `<p><span class="muted">Свои правки</span> <span class="mono">${b.dirty.map(esc).join(", ")}</span></p>` : ""}
+      <p><span class="muted">Копия базы</span> <span>${last ? `${ago(last.ts)} · ${bdSize(last.size)}` : "ещё не делалась — сделается перед обновлением"}</span></p>
+      ${gh?.error ? `<p><span class="muted">GitHub</span> <span style="color:var(--rose)">${esc(gh.error)}</span></p>` : ""}
+    </div>
+    ${b.mode === "image" ? `<p class="hint">Бот из готового образа: обновление скачивает свежий образ, указанный в его docker-compose.</p>` : ""}
+    <div class="form-actions">
+      ${gh?.latest ? `<button class="btn ${gh.status === "update" ? "btn-primary" : ""}" data-bd="bot" ${busyNow ? "disabled" : ""}>
+        ${icon("download")}${gh.status === "update" ? `Обновить до ${esc(gh.latest.tag)}` : "Пересобрать"}</button>` : ""}
+      ${gh?.latest ? `<button class="btn btn-ghost" data-bd-notes="bot">Что нового</button>` : ""}
+    </div></div>`;
+}
+
+function bdCabinetCard(c, gh, busyNow) {
+  const cu = c.custom || {}, back = c.backups[0];
+  const has = cu.source || cu.served || c.modified?.length || c.extra?.length;
+  return `<div class="panel" data-a>
+    <h2>Кабинет ${bdTag(gh)}</h2>
+    <div class="kv-rows">
+      <p><span class="muted">Версия</span> <span>${c.version ? `v${esc(c.version)}` : "?"} ${bdCommit(gh?.repo, c.revision)}</span></p>
+      ${gh?.latest ? `<p><span class="muted">Последний релиз</span> <span>${esc(gh.latest.tag)} · ${bdDate(gh.latest.date)}</span></p>` : ""}
+      <p><span class="muted">Где</span> <span class="mono">${c.mode === "static" ? esc(c.dist) : `контейнер ${esc(c.container)}`}</span></p>
+      ${c.mode === "static" ? `<p><span class="muted">Свой кастом</span> <span>${has ? [
+          cu.source ? `слой <span class="mono">${esc(cu.source)}</span> (${cu.files.map(esc).join(", ")})${cu.injected ? "" : ` — <span style="color:var(--amber)">не подключён</span>`}`
+            : cu.served ? `папка <span class="mono">custom/</span>` : "",
+          c.modified?.length ? `изменены: <span class="mono">${c.modified.map(esc).join(", ")}</span>` : "",
+          c.extra?.length ? `свои файлы: <span class="mono">${c.extra.map(esc).join(", ")}</span>` : "",
+        ].filter(Boolean).join("<br>") : "нет"}</span></p>
+        <p><span class="muted">Резервные копии</span> <span>${c.backups.length ? `${c.backups.length} · последняя ${ago(back.ts)}${back.version ? ` · v${esc(back.version)}` : ""}` : "появятся при обновлении"}</span></p>` : ""}
+      ${gh?.error ? `<p><span class="muted">GitHub</span> <span style="color:var(--rose)">${esc(gh.error)}</span></p>` : ""}
+    </div>
+    ${c.mode === "static" && !c.manifest ? `<p class="hint">Правки внутри файлов кабинета панель отличает от релиза начиная со следующего обновления:
+      сейчас она ещё не знает, какими файлы были «из коробки». Слой custom/ и свои файлы сохраняются и сейчас.</p>` : ""}
+    <div class="form-actions">
+      ${gh?.latest ? `<button class="btn ${gh.status === "update" ? "btn-primary" : ""}" data-bd="cabinet" ${busyNow ? "disabled" : ""}>
+        ${icon("download")}${gh.status === "update" ? `Обновить до ${esc(gh.latest.tag)}` : `Переустановить ${esc(gh.latest.tag)}`}</button>` : ""}
+      ${gh?.latest ? `<button class="btn btn-ghost" data-bd-notes="cabinet">Что нового</button>` : ""}
+      ${c.mode === "static" && (cu.source || cu.served) ? `<button class="btn btn-ghost" data-bd-run="custom" ${busyNow ? "disabled" : ""}>Наложить слой заново</button>` : ""}
+      ${c.mode === "static" && back ? `<button class="btn btn-ghost" data-bd-run="rollback" ${busyNow ? "disabled" : ""}>
+        Откатить${back.version ? ` к v${esc(back.version)}` : ""}</button>` : ""}
+    </div></div>`;
+}
+
+function bdConfirm(target, d) {
+  const gh = d.github[target], rels = gh.newer.length ? gh.newer : [gh.latest];
+  const breaking = gh.status === "update" && bdBreaking(gh.newer);
+  let body = "";
+  if (target === "bot") {
+    const b = d.info.bot;
+    body = `<ul class="bd-steps">
+        <li>Копия базы бота — в <span class="mono">/opt/remnadeck/data/backups</span> (хранятся 3 последние)</li>
+        <li>Код перематывается до ${esc(gh.latest.tag)}. ${b.dirty.length ? `Твои правки (${b.dirty.map(esc).join(", ")}) остаются, если релиз их не меняет; если меняет — стоп, ничего не тронуто` : "Своих правок в файлах репозитория нет"}</li>
+        <li>Сборка образа на низком приоритете: несколько минут, подписки не страдают. Не собралось — код возвращается назад, работающий бот не тронут</li>
+        <li>Перезапуск: около минуты бот не отвечает</li>
+        <li>Если в релизе сменилась мажорная версия PostgreSQL — стоп до изменений: такой перенос базы только вручную</li></ul>`;
+  } else if (d.info.cabinet.mode === "static") {
+    const c = d.info.cabinet, cu = c.custom || {};
+    const found = [cu.source && `слой ${esc(cu.source)}`, !cu.source && cu.served && "папка custom/",
+      c.modified?.length && `изменённые файлы: ${c.modified.length}`, c.extra?.length && `свои файлы: ${c.extra.length}`].filter(Boolean);
+    body = `<label class="check"><input type="checkbox" name="keep" checked><span><b>У меня есть свой кастом — не затирать</b></span></label>
+      <p class="hint" style="margin:0">${found.length ? `Найдено: ${found.join(", ")}.` : "Своих правок панель не нашла."}
+        С галочкой остаются слой <span class="mono">custom/</span> (и подключается заново), файлы кабинета, которые ты менял, и добавленные тобой файлы.
+        Без галочки ставится чистый кабинет из релиза — всё своё уберётся из папки кабинета.</p>
+      <p class="hint" style="margin:0">В любом случае сначала делается резервная копия — вернуть можно кнопкой «Откатить».</p>`;
+  } else {
+    body = `<p class="hint" style="margin:0">Кабинет в контейнере ${esc(d.info.cabinet.container)}: скачается образ, указанный в его docker-compose, и контейнер пересоздастся.</p>`;
+  }
+  openModal({
+    title: `${target === "bot" ? "Бот" : "Кабинет"}: ${gh.status === "update" ? `обновить до ${gh.latest.tag}` : `переустановить ${gh.latest.tag}`}`,
+    submit: gh.status === "update" ? "Обновить" : "Переустановить", wide: true,
+    body: `${breaking ? `<div class="banner">В заметках к релизу есть <b>BREAKING CHANGES</b> — прочитай их: возможно, нужны ручные шаги.</div>` : ""}
+      ${body}
+      <details class="bd-notes" ${gh.status === "update" ? "open" : ""}><summary>Что нового${gh.newer.length > 1 ? ` · ${gh.newer.length} релиза` : ""}</summary>${bdNotes(rels)}</details>
+      ${breaking ? `<label class="check"><input type="checkbox" name="ack"><span>Прочитал(а) заметки — можно обновлять</span></label>` : ""}`,
+    onSubmit: async (v) => {
+      if (breaking && !v.ack) throw new Error("Отметь, что прочитал(а) заметки к релизу");
+      await post("/api/bedolaga/run", { action: target, keep_custom: target === "cabinet" ? !!v.keep : true });
+      bdFollow(target);
+    },
+  });
+}
+
+/* ход действия на сервере: лог, пока идёт; окно можно закрыть — продолжится */
+function bdFollow(action) {
+  const sheet = openSheet({
+    title: esc(BD_ACTION[action] || "Bedolaga"), lead: icon("box"),
+    tag: `<span class="tag info" id="bd-state">ждёт сервер…</span>`,
+    body: `<pre class="console" id="bd-log" style="max-height:55vh;min-height:160px">…</pre>
+      <p class="hint" style="margin:0" id="bd-hint">Окно можно закрыть — действие продолжится на сервере.</p>`,
+  });
+  const names = { requested: ["info", "ждёт сервер…"], running: ["info", "идёт…"], done: ["ok", "готово"], error: ["bad", "ошибка"], idle: ["off", "—"] };
+  const t0 = Date.now();
+  const tick = async () => {
+    if (!document.body.contains(sheet)) return location.hash === "#bedolaga" && redraw(false);
+    try {
+      const j = await api("/api/bedolaga/job", { noRedirect: true });
+      const logEl = $("#bd-log", sheet);
+      logEl.textContent = j.log.replace(/\x1b\[[0-9;]*m/g, "") || "…";
+      logEl.scrollTop = logEl.scrollHeight;
+      const [tone, text] = names[j.state] || ["off", j.state];
+      $("#bd-state", sheet).className = `tag ${tone}`; $("#bd-state", sheet).textContent = text;
+      if (j.state === "requested" && Date.now() - t0 > 20000)
+        $("#bd-hint", sheet).innerHTML = `Сервер не забирает запрос. Обновлятор включается командой <code>cd /opt/remnadeck && sudo bash install.sh</code>`;
+      if (j.state === "done" || j.state === "error") {
+        toast(j.state === "done" ? `${BD_ACTION[j.action] || "Действие"}: готово` : "Не получилось — причина в логе", j.state === "error");
+        $("#bd-hint", sheet).textContent = j.state === "done" ? "Готово." : "Ничего страшного: скрипт останавливается до изменений или возвращает как было — подробности выше.";
+        return;
+      }
+    } catch { /* панель могла перезапуститься — пробуем дальше */ }
+    setTimeout(tick, 2000);
+  };
+  tick();
+}
+
+let bdRedetect = 0;
+Object.assign(VIEWS, {
+  bedolaga: {
+    title: "Bedolaga", sub: "", bare: true, refresh: 30,
+    load: () => api("/api/bedolaga"),
+    actions: () => "",
+    draw: (d) => {
+      const j = d.job, busyNow = j.state === "running" || j.state === "requested";
+      const recent = !busyNow && j.ts && Date.now() / 1000 - j.ts < 3600 && (j.state === "done" || j.state === "error");
+      return `<div class="panel list-head" data-a>
+          <div class="list-title"><span class="row-tile big-tile">${icon("box")}</span><h2>Bedolaga</h2></div>
+          <div class="tool-row"><button class="tool-btn cyan" id="bd-check" aria-label="Проверить сейчас" title="Найти заново и проверить релизы">${icon("refresh")}</button></div>
+        </div>
+        ${!j.installed ? `<div class="banner" data-a>Обновление по кнопке включается один раз командой на сервере:
+          <code>cd /opt/remnadeck && sudo bash install.sh</code></div>` : ""}
+        ${busyNow ? `<div class="banner" data-a>${esc(BD_ACTION[j.action] || "Действие")} идёт… <a href="#" id="bd-show">Показать ход</a></div>` : ""}
+        ${recent ? `<p class="muted" data-a style="margin:0 0 12px">${esc(BD_ACTION[j.action] || "Действие")} ${ago(j.ts)}:
+          <span class="tag ${j.state === "done" ? "ok" : "bad"}">${j.state === "done" ? "готово" : "ошибка"}</span> <a href="#" id="bd-show">лог</a></p>` : ""}
+        ${!d.info ? `<div class="panel" data-a><p class="empty">${d.detecting ? "Ищу бота и кабинет на сервере…" : "Сервер ещё не проверен."}</p></div>` : ""}
+        ${d.info && !d.info.bot && !d.info.cabinet ? `<div class="panel" data-a><p class="empty">Ни бота, ни кабинета Bedolaga на сервере не найдено.</p></div>` : ""}
+        <div class="grid two">
+          ${d.info?.bot ? bdBotCard(d.info.bot, d.github.bot, busyNow) : ""}
+          ${d.info?.cabinet ? bdCabinetCard(d.info.cabinet, d.github.cabinet, busyNow) : ""}
+        </div>
+        ${d.info ? `<p class="muted" style="font-size:12px">Сервер проверен ${ago(d.info.detected_at)}</p>` : ""}`;
+    },
+    bind: (d, root) => {
+      // только что попросили сервер поискать — через пару секунд покажем найденное (один раз)
+      if (d.detecting && Date.now() - bdRedetect > 10000) { bdRedetect = Date.now(); setTimeout(() => location.hash === "#bedolaga" && redraw(false), 3000); }
+      $("#bd-check", root).addEventListener("click", (e) => busy(e.currentTarget, async () => {
+        try { await api("/api/bedolaga?force=true"); } catch (x) { return toast(x.message, true); }
+        await new Promise((r) => setTimeout(r, 2500));
+        redraw(false);
+      }));
+      $("#bd-show", root)?.addEventListener("click", (e) => { e.preventDefault(); bdFollow(d.job.action); });
+      $$("[data-bd]", root).forEach((b) => b.addEventListener("click", () => bdConfirm(b.dataset.bd, d)));
+      $$("[data-bd-notes]", root).forEach((b) => b.addEventListener("click", () => {
+        const gh = d.github[b.dataset.bdNotes];
+        openSheet({ title: `${b.dataset.bdNotes === "bot" ? "Бот" : "Кабинет"}: что нового`, lead: icon("box"),
+          body: bdNotes(gh.newer.length ? gh.newer : [gh.latest]) });
+      }));
+      $$("[data-bd-run]", root).forEach((b) => b.addEventListener("click", () => {
+        const act = b.dataset.bdRun, back = d.info.cabinet.backups[0];
+        const text = act === "rollback"
+          ? `Вернуть кабинет из резервной копии от ${bdDate(back.ts)}${back.version ? ` (v${back.version})` : ""}? Копия вернётся целиком — со слоем и своими файлами того момента.`
+          : "Скопировать слой правок в кабинет и подключить custom.css/custom.js заново? Нужно после правки файлов слоя.";
+        if (!confirm(text)) return;
+        busy(b, async () => {
+          try { await post("/api/bedolaga/run", { action: act }); bdFollow(act); } catch (x) { toast(x.message, true); }
+        });
+      }));
+    },
+  },
+});
